@@ -20,8 +20,8 @@ var ErrUnsupported = errors.New("pty: pseudo-terminal not supported on this OS")
 // Session is one live PTY session. It owns a conpty.ConPty which is a
 // bidirectional ReadWriteCloser (keystrokes in, terminal output out).
 type Session struct {
-	cpty  *conpty.ConPty
-	mu    sync.Mutex
+	cpty   *conpty.ConPty
+	mu     sync.Mutex
 	closed bool
 }
 

@@ -35,9 +35,9 @@ func (q *fakeTaskQueue) Retry(context.Context, string) (*acpclient.Task, error) 
 func (q *fakeTaskQueue) Cancel(context.Context, string) (*acpclient.Task, error) {
 	return nil, nil
 }
-func (q *fakeTaskQueue) Pause()          {}
-func (q *fakeTaskQueue) Resume()         {}
-func (q *fakeTaskQueue) Paused() bool    { return false }
+func (q *fakeTaskQueue) Pause()       {}
+func (q *fakeTaskQueue) Resume()      {}
+func (q *fakeTaskQueue) Paused() bool { return false }
 
 // newContinueDaemon wires a daemon with a recording task queue attached.
 func newContinueDaemon(t *testing.T) (*httptest.Server, *acpclient.Store, *Bridge, *fakeTaskQueue) {

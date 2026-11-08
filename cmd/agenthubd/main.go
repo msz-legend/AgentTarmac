@@ -33,11 +33,11 @@ func main() {
 		addr          = flag.String("addr", "127.0.0.1:8799", "listen address (loopback by default)")
 		data          = flag.String("data", "data", "data directory for the SQLite database and token file")
 		token         = flag.String("token", "", "API bearer token (default: $AGENTHUB_TOKEN or generated into <data>/token)")
-		retentionDays = flag.String("retention-days", "0", "session retention in days; 0 = keep forever (PRD D9 default; suggest 90 for a rolling window)")
+		retentionDays = flag.String("retention-days", "90", "session retention in days; 0 = keep forever (PRD D9 default; suggest 90 for a rolling window)")
 		hookPath      = flag.String("hook-path", "", "hub-hook binary for managed CC approvals (default: hub-hook(.exe) next to this binary)")
-		wecomWebhook   = flag.String("wecom-webhook", "", "WeCom group-bot full webhook URL (default: $AGENTHUB_WECOM_WEBHOOK; PRD M2)")
-		wecomBotID     = flag.String("wecom-bot-id", "", "WeCom group-bot id (default: $AGENTHUB_WECOM_BOT_ID)")
-		wecomBotToken  = flag.String("wecom-bot-token", "", "WeCom group-bot token (used as webhook key; default: $AGENTHUB_WECOM_BOT_TOKEN)")
+		wecomWebhook  = flag.String("wecom-webhook", "", "WeCom group-bot full webhook URL (default: $AGENTHUB_WECOM_WEBHOOK; PRD M2)")
+		wecomBotID    = flag.String("wecom-bot-id", "", "WeCom group-bot id (default: $AGENTHUB_WECOM_BOT_ID)")
+		wecomBotToken = flag.String("wecom-bot-token", "", "WeCom group-bot token (used as webhook key; default: $AGENTHUB_WECOM_BOT_TOKEN)")
 		taskConc      = flag.Int("task-concurrency", 2, "max concurrently running managed tasks (PRD F6)")
 		relayURL      = flag.String("relay", "", "self-hosted relay URL (wss://host/relay/hub/<id>?token=…; PRD D8, default off)")
 		feishuWebhook = flag.String("feishu-webhook", "", "Feishu custom-bot webhook URL (default: $AGENTHUB_FEISHU_WEBHOOK)")
@@ -245,6 +245,13 @@ func resolveToken(flagToken, dataDir string) (string, error) {
 	}
 	tokenPath := filepath.Join(dataDir, "token")
 	if raw, err := os.ReadFile(tokenPath); err == nil && len(raw) >= 32 {
+		// Existing token: re-assert the Windows ACL each boot so a file that
+		// was created before this hardening (or chmod'd away) gets locked down.
+		if runtime.GOOS == "windows" {
+			if err := restrictTokenFile(tokenPath); err != nil {
+				log.Printf("token file ACL warning: %v", err)
+			}
+		}
 		return string(trimSpaceBytes(raw)), nil
 	}
 	buf := make([]byte, 32)
@@ -254,6 +261,11 @@ func resolveToken(flagToken, dataDir string) (string, error) {
 	tok := hex.EncodeToString(buf)
 	if err := os.WriteFile(tokenPath, []byte(tok), 0o600); err != nil {
 		return "", err
+	}
+	if runtime.GOOS == "windows" {
+		if err := restrictTokenFile(tokenPath); err != nil {
+			log.Printf("token file ACL warning: %v", err)
+		}
 	}
 	return tok, nil
 }

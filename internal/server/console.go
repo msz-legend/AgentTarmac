@@ -9,14 +9,15 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/agenttarmac/agenttarmac/internal/acpclient"
-	"github.com/agenttarmac/agenttarmac/internal/pty"
 	"github.com/agenttarmac/agenttarmac/internal/platform"
+	"github.com/agenttarmac/agenttarmac/internal/pty"
 	"github.com/agenttarmac/agenttarmac/internal/push"
 	"github.com/agenttarmac/agenttarmac/internal/runner"
 
@@ -284,7 +285,27 @@ func (s *Server) handleSessionTerminalWS(w http.ResponseWriter, r *http.Request)
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  4 * 1024,
 		WriteBufferSize: 4 * 1024,
-		CheckOrigin:     func(r *http.Request) bool { return true },
+		CheckOrigin: func(r *http.Request) bool {
+			// 仅允许同源或本地回环，防止跨站 WebSocket 劫持（PRD §9）。
+			host := r.Host
+			if host == "" {
+				host = r.URL.Host
+			}
+			switch host {
+			case "127.0.0.1:8799", "localhost:8799":
+				return true
+			default:
+				// 允许显式配置的额外源（逗号分隔，env AGENTHUB_WS_ALLOW_ORIGINS）
+				if allowed := os.Getenv("AGENTHUB_WS_ALLOW_ORIGINS"); allowed != "" {
+					for _, o := range strings.Split(allowed, ",") {
+						if o := strings.TrimSpace(o); o != "" && o == host {
+							return true
+						}
+					}
+				}
+				return false
+			}
+		},
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -409,7 +430,7 @@ func (s *Server) handleSessionContinue(w http.ResponseWriter, r *http.Request) {
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"ok": true, "mode": "task-redispatch", "task_id": t.ID,
-				"session_id": "task-" + strings.TrimPrefix(t.ID, "task_"),
+				"session_id":        "task-" + strings.TrimPrefix(t.ID, "task_"),
 				"parent_session_id": id,
 			})
 			return

@@ -18,12 +18,13 @@ const TITLE = "AgentTarmac";
 
 // 本机规范数据目录：与 launcher/start.ps1、CC/Codex hook 共用同一份 token。
 // 壳若另起 daemon 时复用此目录，token 与 hook 硬编码值一致，避免 401 → fail-closed 全 deny。
-const SHARED_DATA_DIR = path.join("D:", "DevTools", "AgentHub", "data");
+// AGENTHUB_DATA 环境变量优先；否则使用 Electron userData 下的 AgentHub/data。
+const DEFAULT_DATA_DIR = path.join(app.getPath("userData"), "AgentHub", "data");
 
 function resolveDataDir() {
   if (process.env.AGENTHUB_DATA) return process.env.AGENTHUB_DATA;
   try {
-    if (fs.existsSync(path.join(SHARED_DATA_DIR, "token"))) return SHARED_DATA_DIR;
+    if (fs.existsSync(path.join(DEFAULT_DATA_DIR, "token"))) return DEFAULT_DATA_DIR;
   } catch (_) {}
   return path.join(app.getPath("userData"), "data");
 }
@@ -36,7 +37,7 @@ function readToken(dataDir) {
   const candidates = [
     process.env.AGENTHUB_DATA && tokenFileOf(process.env.AGENTHUB_DATA),
     tokenFileOf(dataDir),
-    tokenFileOf(SHARED_DATA_DIR),
+    tokenFileOf(DEFAULT_DATA_DIR),
   ].filter(Boolean);
   for (const p of candidates) {
     try {

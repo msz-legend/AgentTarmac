@@ -490,9 +490,6 @@ func (b *Bridge) SendAgentRequest(req AgentRequest) (AgentRequest, error) {
 		}
 		req.RequestID = uid
 	}
-	if req.AgentKind == "" {
-		req.AgentKind = acpclient.AgentKindClaudeCode
-	}
 	if req.CreatedAt == 0 {
 		req.CreatedAt = time.Now().Unix()
 	}

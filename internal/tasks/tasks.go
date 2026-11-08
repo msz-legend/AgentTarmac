@@ -350,6 +350,21 @@ func (q *Queue) emit(t *acpclient.Task, action string) {
 	}
 }
 
+// resolveAgentBinary resolves the agent executable for a task, returning a
+// clear error when the CLI is not installed (PRD F6: fail fast with an
+// actionable message instead of an opaque exec error at spawn time).
+func resolveAgentBinary(kind string) (string, error) {
+	name := "claude"
+	if kind == acpclient.AgentKindCodex {
+		name = "codex"
+	}
+	p, err := exec.LookPath(name)
+	if err != nil {
+		return "", fmt.Errorf("%s CLI not found in PATH; install it or add it to PATH", name)
+	}
+	return p, nil
+}
+
 // spawnCommand builds the headless agent command for a managed task.
 //
 //	claude_code: `claude -p <prompt> --output-format stream-json --verbose
@@ -361,6 +376,10 @@ func (q *Queue) emit(t *acpclient.Task, action string) {
 func (q *Queue) spawnCommand(ctx context.Context, t *acpclient.Task, sessionID string) (*exec.Cmd, string, error) {
 	if q.spawner != nil {
 		return q.spawner(ctx, t, sessionID)
+	}
+	bin, err := resolveAgentBinary(t.AgentKind)
+	if err != nil {
+		return nil, "", err
 	}
 	if t.AgentKind == acpclient.AgentKindClaudeCode {
 		if q.hookCommand == "" {
@@ -378,18 +397,20 @@ func (q *Queue) spawnCommand(ctx context.Context, t *acpclient.Task, sessionID s
 		if err != nil {
 			return nil, "", err
 		}
-		file := filepath.Join(os.TempDir(), "agenthub-task-"+sessionID+"-settings.json")
+		// Include the task id so concurrent tasks never collide on the same
+		// temp settings file (session id alone repeats across retries).
+		file := filepath.Join(os.TempDir(), "agenthub-task-"+sessionID+"-"+t.ID+"-settings.json")
 		if err := os.WriteFile(file, raw, 0o600); err != nil {
 			return nil, "", err
 		}
-		cmd := exec.CommandContext(ctx, "claude", "-p", t.Prompt,
+		cmd := exec.CommandContext(ctx, bin, "-p", t.Prompt,
 			"--output-format", "stream-json", "--verbose",
 			"--settings", file)
 		cmd.Dir = t.CWD
 		return cmd, file, nil
 	}
 	// codex
-	cmd := exec.CommandContext(ctx, "codex", "exec", "--json", t.Prompt)
+	cmd := exec.CommandContext(ctx, bin, "exec", "--json", t.Prompt)
 	cmd.Dir = t.CWD
 	return cmd, "", nil
 }

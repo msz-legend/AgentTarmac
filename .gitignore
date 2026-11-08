@@ -1,5 +1,6 @@
 # Build artifacts
 bin/
+install/
 desktop/dist/
 desktop/node_modules/
 *.exe

@@ -641,6 +641,7 @@ type wsEnvelope struct {
 	Decision  string          `json:"decision"`
 	Outcome   string          `json:"outcome"`
 	Applied   bool            `json:"applied"`
+	AgentKind string          `json:"agentKind"`
 }
 
 // handleAgentRequestEvent forwards a Hub→agent command to the agent. For
@@ -650,6 +651,15 @@ func (c *Connector) handleAgentRequestEvent(ctx context.Context, raw []byte) err
 	var evt wsEnvelope
 	if err := json.Unmarshal(raw, &evt); err != nil {
 		return err
+	}
+
+	// 只转发与本 connector kind 匹配的请求，避免多个 connector
+	// 同时连 Hub 时把请求错误转发给不该处理的 agent。
+	// evt.AgentKind 为空时放行（向后兼容旧调用）；非空且不匹配则丢弃。
+	if evt.AgentKind != "" && evt.AgentKind != c.cfg.AgentKind {
+		c.log.Printf("dropped %s for kind %s (this connector: %s)",
+			evt.Method, evt.AgentKind, c.cfg.AgentKind)
+		return nil
 	}
 
 	switch evt.Method {

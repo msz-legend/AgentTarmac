@@ -17,8 +17,8 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/agenttarmac/agenttarmac/internal/acpclient"
-	"github.com/agenttarmac/agenttarmac/internal/pty"
 	"github.com/agenttarmac/agenttarmac/internal/platform"
+	"github.com/agenttarmac/agenttarmac/internal/pty"
 	"github.com/agenttarmac/agenttarmac/internal/push"
 	"github.com/agenttarmac/agenttarmac/internal/runner"
 )
@@ -52,11 +52,11 @@ func NewServer(addr string, bridge *Bridge, store *acpclient.Store, token string
 		logger = log.Default()
 	}
 	s := &Server{
-		bridge:     bridge,
-		store:      store,
-		token:      token,
-		log:        logger,
-		platform:   platform.New(),
+		bridge:      bridge,
+		store:       store,
+		token:       token,
+		log:         logger,
+		platform:    platform.New(),
 		ptySessions: make(map[string]*pty.Session),
 	}
 	hs := &http.Server{

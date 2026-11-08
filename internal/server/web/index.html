@@ -1,0 +1,1735 @@
+<!doctype html>
+<html lang="zh-CN" data-lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AgentHub · 放行台</title>
+<script>window.__TARMAC_BOOT__=/*__BOOT__*/null;</script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.5.0/css/xterm.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.5.0/lib/xterm.js"></script>
+<style>
+:root{
+  --bg:#1c1714; --surface:#262019; --surface2:#2f2820; --line:#3d342a;
+  --ink:#ece4da; --muted:#a99c8d; --faint:#7d7266;
+  --amber:#e0a458; --amber-dim:#7a5a30;
+  --green:#8fb573; --red:#d4736a; --blue:#7fa3c9; --violet:#a893c4;
+  --rail:62px; --top:54px; --bottom:34px;
+  --sans:"Segoe UI","PingFang SC","Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",system-ui,sans-serif;
+  --mono:"Cascadia Code","SF Mono","Cascadia Mono",Consolas,"Courier New",monospace;
+}
+html[data-lang="ja"]{ --sans:"Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo","Noto Sans JP","Segoe UI",system-ui,sans-serif; }
+html[data-lang="en"]{ --sans:"Segoe UI",Roboto,"Helvetica Neue",system-ui,sans-serif; }
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:var(--sans); font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+.hidden{display:none !important}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+button:disabled{cursor:not-allowed;opacity:.42}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+.app{display:grid;grid-template-rows:var(--top) 1fr var(--bottom);height:100vh;height:100dvh}
+
+/* topbar */
+.topbar{
+  display:flex;align-items:center;gap:14px;padding:0 16px;
+  background:var(--surface);border-bottom:1px solid var(--line);
+  min-width:0;
+}
+.brand{display:flex;align-items:center;gap:10px;flex:0 0 auto;min-width:0}
+.brand-glyph{
+  width:26px;height:26px;border-radius:7px;flex:0 0 auto;
+  background:linear-gradient(150deg,var(--amber),#b5712f);
+  display:grid;place-items:center;font-weight:800;font-size:13px;color:#1c1714;
+}
+.brand-name{font-weight:650;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand-sub{color:var(--muted);font-size:12px;white-space:nowrap}
+.top-stats{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;overflow:hidden}
+.stat{
+  display:flex;align-items:center;gap:7px;padding:5px 11px;border-radius:7px;
+  background:var(--surface2);border:1px solid var(--line);
+  font-size:12.5px;white-space:nowrap;
+}
+.stat b{font-weight:650;font-variant-numeric:tabular-nums}
+.stat .dot{width:7px;height:7px;border-radius:50%;background:var(--green);flex:0 0 auto}
+.stat.waiting{border-color:var(--amber-dim);color:var(--amber)}
+.stat.waiting .dot{background:var(--amber)}
+.top-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.iconbtn{
+  width:30px;height:30px;border-radius:7px;display:grid;place-items:center;
+  border:1px solid var(--line);background:var(--surface2);color:var(--muted);
+  font-size:14px;
+}
+.iconbtn:hover{color:var(--ink);border-color:var(--faint)}
+.iconbtn.langbtn{font-size:11px;font-weight:700;letter-spacing:.04em;min-width:34px}
+
+/* shell */
+.shell{display:grid;grid-template-columns:var(--rail) 1fr;min-height:0}
+.rail{
+  background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0;
+}
+.navbtn{
+  width:52px;min-height:48px;border-radius:9px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:3px;color:var(--muted);
+  font-size:10.5px;position:relative;
+}
+.navbtn:hover{color:var(--ink);background:var(--surface2)}
+.navbtn.on{color:var(--amber);background:rgba(224,164,88,.10)}
+.navbtn .ico{font-size:16px;line-height:1}
+.navbtn .badge{
+  position:absolute;top:3px;right:5px;min-width:15px;height:15px;padding:0 3px;
+  border-radius:8px;background:var(--amber);color:#1c1714;
+  font-size:9.5px;font-weight:800;display:grid;place-items:center;
+}
+.rail-spacer{flex:1}
+.workspace{overflow-y:auto;min-width:0}
+.view{padding:22px 26px 44px;max-width:1180px}
+.view-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap}
+.view-head>div{min-width:0}
+h1{font-size:19px;font-weight:650;letter-spacing:-.025em;margin:0 0 4px}
+.sub{color:var(--muted);font-size:12.5px;margin:0;max-width:72ch;line-height:1.6}
+
+/* status board */
+.board-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:22px}
+.tile{
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  padding:15px 16px;display:flex;flex-direction:column;gap:6px;
+}
+.tile .k{color:var(--muted);font-size:12px}
+.tile .v{font-size:28px;font-weight:700;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1.1}
+.tile .n{color:var(--faint);font-size:11.5px}
+.tile.alert{border-color:var(--amber-dim)}
+.tile.alert .v{color:var(--amber)}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;margin-bottom:14px;overflow:hidden}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.panel-title{font-weight:650;font-size:13.5px}
+.panel-body{padding:6px 0}
+.row{
+  display:flex;align-items:center;gap:12px;padding:10px 16px;
+  border-bottom:1px solid var(--line);font-size:13px;
+}
+.row:last-child{border-bottom:0}
+.row .grow{flex:1;min-width:0}
+.row .t1{font-weight:550}
+.row .t2{color:var(--muted);font-size:12px;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:650;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.pill .dot{width:6px;height:6px;border-radius:50%;background:var(--faint)}
+.pill.s-running{color:var(--green);border-color:#3f5230}
+.pill.s-running .dot{background:var(--green)}
+.pill.s-waiting_approval{color:var(--amber);border-color:var(--amber-dim)}
+.pill.s-waiting_approval .dot{background:var(--amber)}
+.pill.s-dead,.pill.s-failed{color:var(--red);border-color:#5c3530}
+.pill.s-dead .dot,.pill.s-failed .dot{background:var(--red)}
+.pill.s-idle,.pill.s-finished{color:var(--muted)}
+.pill.s-starting{color:var(--blue);border-color:#33465c}
+.pill.s-starting .dot{background:var(--blue)}
+.risk{display:inline-block;padding:1px 7px;border-radius:5px;font-size:10.5px;font-weight:700;letter-spacing:.02em}
+.risk.low{color:var(--muted);background:var(--surface2)}
+.risk.medium{color:var(--blue);background:rgba(127,163,201,.14)}
+.risk.high{color:var(--red);background:rgba(212,115,106,.14)}
+
+/* approval strips */
+.strip{
+  background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--faint);
+  border-radius:10px;padding:13px 15px;margin-bottom:10px;cursor:pointer;
+}
+.strip:hover{background:var(--surface2)}
+.strip.sel{border-color:var(--amber-dim);border-left-color:var(--amber);background:var(--surface2)}
+.strip-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.strip-id{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
+.strip-tool{font-weight:650;font-size:12.5px}
+.strip-time{margin-left:auto;color:var(--faint);font-size:11.5px;font-variant-numeric:tabular-nums}
+.strip-cmd{
+  font-family:var(--mono);font-size:12.5px;background:#171310;border:1px solid var(--line);
+  border-radius:7px;padding:9px 11px;margin:8px 0;white-space:pre-wrap;word-break:break-all;
+  color:var(--ink);
+}
+.strip-meta{color:var(--muted);font-size:11.5px;font-family:var(--mono)}
+.dec-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:11px}
+.dec{
+  border:1px solid var(--line);border-radius:8px;padding:9px 10px;text-align:left;
+  background:var(--surface2);display:flex;flex-direction:column;gap:3px;min-width:0;
+}
+.dec:hover:not(:disabled){border-color:var(--faint)}
+.dec .k{font-size:12px;font-weight:650;display:flex;align-items:center;gap:6px}
+.dec .k .keynum{
+  width:16px;height:16px;border-radius:4px;background:#171310;border:1px solid var(--line);
+  display:grid;place-items:center;font-size:10px;font-weight:700;color:var(--muted);flex:0 0 auto;
+}
+.dec .d{color:var(--faint);font-size:10.5px;font-family:var(--mono);line-height:1.4}
+.dec.allow .k{color:var(--green)}
+.dec.session .k{color:var(--blue)}
+.dec.always .k{color:var(--violet)}
+.dec.deny .k{color:var(--red)}
+.dec.always.arm{border-color:var(--violet);background:rgba(168,147,196,.10)}
+.dec.always.arm .k{color:var(--violet)}
+
+.empty{padding:34px 20px;text-align:center;color:var(--faint);font-size:13px}
+.linkbtn{color:var(--blue);font-size:12px;text-decoration:none;border-bottom:1px dotted var(--blue)}
+.linkbtn:hover{color:var(--ink)}
+
+/* event feed */
+.ev{display:flex;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line);font-size:12.5px}
+.ev:last-child{border-bottom:0}
+.ev-time{color:var(--faint);font-family:var(--mono);font-size:11px;flex:0 0 auto;padding-top:1px}
+.ev-kind{font-family:var(--mono);font-size:11px;color:var(--muted);flex:0 0 auto}
+.ev-body{flex:1;min-width:0}
+.ev-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ev-detail{color:var(--faint);font-size:11.5px;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* rules */
+.rule-row{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line);font-size:12.5px}
+.rule-row:last-child{border-bottom:0}
+.rule-key{font-family:var(--mono);font-size:12px;background:#171310;border:1px solid var(--line);border-radius:6px;padding:4px 8px}
+.rule-meta{color:var(--muted);font-size:11.5px}
+
+/* settings */
+.srow{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 16px;border-bottom:1px solid var(--line)}
+.srow:last-child{border-bottom:0}
+.srow .grow{flex:1;min-width:0}
+.stitle{font-weight:550;font-size:13px}
+.sdesc{color:var(--muted);font-size:11.5px;margin-top:2px}
+.mono-box{font-family:var(--mono);font-size:11.5px;background:#171310;border:1px solid var(--line);border-radius:7px;padding:8px 10px;word-break:break-all;color:var(--muted)}
+.langseg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:0 0 auto}
+.langseg button{padding:6px 13px;font-size:12px;color:var(--muted);background:var(--surface2)}
+.langseg button.on{background:var(--amber);color:#1c1714;font-weight:700}
+.srow-ctrl{display:flex;align-items:center;gap:8px;flex:0 0 auto;flex-wrap:wrap;justify-content:flex-end}
+.srow-ctrl .mono-box{padding:6px 9px}
+.btn.tgl{min-width:52px;font-variant-numeric:tabular-nums}
+.btn.tgl.on{border-color:var(--amber-dim);color:var(--amber)}
+
+/* statusline */
+.statusline{
+  display:flex;align-items:center;gap:14px;padding:0 14px;
+  background:var(--surface);border-top:1px solid var(--line);
+  font-size:11.5px;color:var(--muted);font-family:var(--mono);
+  overflow:hidden;white-space:nowrap;
+}
+.statusline .r{margin-left:auto;display:flex;gap:12px}
+.statusline .ok{color:var(--green)}
+
+/* overlay */
+.overlay{
+  position:fixed;inset:0;background:rgba(12,9,7,.72);
+  display:grid;place-items:center;padding:20px;z-index:50;
+}
+.modal{
+  width:min(560px,100%);background:var(--surface);border:1px solid var(--line);
+  border-radius:14px;padding:20px;max-height:88vh;overflow-y:auto;
+}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+.modal-title{font-size:16px;font-weight:650;letter-spacing:-.02em}
+.modal-body{font-size:13px;color:var(--muted);margin-bottom:14px}
+.frame-form input[type="text"]{
+  background:#171310;border:1px solid var(--line);border-radius:8px;
+  color:var(--ink);font:inherit;font-size:13px;padding:9px 10px;
+}
+textarea{
+  width:100%;min-height:88px;background:#171310;border:1px solid var(--line);
+  border-radius:8px;color:var(--ink);font:inherit;font-size:13px;padding:10px;
+  resize:vertical;margin-top:10px;
+}
+textarea:focus{outline:none;border-color:var(--amber-dim)}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.btn{padding:8px 15px;border-radius:8px;font-size:13px;font-weight:600;border:1px solid var(--line);background:var(--surface2)}
+.btn:hover{border-color:var(--faint)}
+.btn.primary{background:var(--red);border-color:var(--red);color:#1c1714}
+.btn.primary:hover{filter:brightness(1.08)}
+
+/* toast */
+.toast-wrap{position:fixed;right:18px;bottom:calc(var(--bottom) + 14px);display:flex;flex-direction:column;gap:8px;z-index:60;justify-items:end}
+.toast{
+  background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--green);
+  border-radius:9px;padding:10px 14px;font-size:12.5px;max-width:340px;
+  box-shadow:0 6px 22px rgba(0,0,0,.4);
+}
+
+@media (max-width:900px){
+  .dec-row{grid-template-columns:repeat(2,1fr)}
+  .brand-sub{display:none}
+}
+@media (max-width:760px){
+  .shell{grid-template-columns:1fr}
+  .rail{
+    position:fixed;left:0;right:0;bottom:0;height:56px;z-index:40;
+    flex-direction:row;justify-content:space-around;padding:0;gap:0;
+    border-right:0;border-top:1px solid var(--line);
+  }
+  .navbtn{width:auto;min-width:56px;height:50px;flex:1}
+  .rail-spacer{display:none}
+  .workspace{padding-bottom:66px}
+  .top-stats .stat:not(.waiting){display:none}
+  .view{padding:16px 16px 40px}
+  .brand-name{max-width:calc(100vw - 150px)}
+  .toast-wrap{left:12px;right:12px;bottom:calc(56px + 12px);justify-items:stretch}
+  .toast{max-width:none;width:100%}
+  .srow-notify{flex-direction:column;align-items:stretch;gap:9px}
+  .srow-notify .grow{flex:none}
+  .srow-notify .srow-ctrl{justify-content:flex-start}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-glyph">A</div>
+      <div class="brand-name">AgentHub <span class="brand-sub" data-i18n="brand.sub">· 放行台</span></div>
+    </div>
+    <div class="top-stats">
+      <div class="stat"><span class="dot"></span><span data-i18n="stat.daemon">daemon</span> <b id="stDaemon">—</b></div>
+      <div class="stat"><span data-i18n="stat.agents">Agent</span> <b id="stAgents">0</b></div>
+      <div class="stat waiting"><span data-i18n="stat.pending">待放行</span> <b id="stPending">0</b></div>
+      <div class="stat"><span data-i18n="stat.sessions">会话</span> <b id="stSessions">0</b></div>
+    </div>
+    <div class="top-actions">
+      <button class="iconbtn langbtn" id="langBtn" title="语言 / Language / 言語">中</button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <nav class="rail" id="rail">
+      <button class="navbtn on" data-view="board"><span class="ico">▦</span><span data-i18n="nav.board">态势</span></button>
+      <button class="navbtn" data-view="desk"><span class="ico">◉</span><span data-i18n="nav.desk">放行台</span><span class="badge hidden" id="navBadge">0</span></button>
+      <button class="navbtn" data-view="sessions"><span class="ico">▤</span><span data-i18n="nav.sessions">会话</span></button>
+      <button class="navbtn" data-view="tasks"><span class="ico">▩</span><span data-i18n="nav.tasks">任务</span></button>
+      <button class="navbtn" data-view="stream"><span class="ico">≡</span><span data-i18n="nav.stream">事件流</span></button>
+      <button class="navbtn" data-view="rules"><span class="ico">⌘</span><span data-i18n="nav.rules">规则</span></button>
+      <button class="navbtn" data-view="terminal"><span class="ico">⬢</span><span data-i18n="nav.terminal">终端</span></button>
+      <button class="navbtn" data-view="settings"><span class="ico">⚙</span><span data-i18n="nav.settings">设置</span></button>
+      <div class="rail-spacer"></div>
+    </nav>
+
+    <main class="workspace">
+
+      <!-- status board (landing) -->
+      <section class="view" id="view-board">
+        <div class="view-head">
+          <div>
+            <h1 data-i18n="board.title">全局态势</h1>
+            <p class="sub" data-i18n="board.sub">本机所有 Agent 的运行状态、待放行请求与最近事件，一屏看完。</p>
+          </div>
+        </div>
+        <div class="board-grid">
+          <div class="tile"><span class="k" data-i18n="tile.agents">在线 Agent</span><span class="v" id="tileAgents">0</span><span class="n" id="tileAgentsN"></span></div>
+          <div class="tile"><span class="k" data-i18n="tile.sessions">活跃会话</span><span class="v" id="tileSessions">0</span><span class="n" id="tileSessionsN"></span></div>
+          <div class="tile alert"><span class="k" data-i18n="tile.pending">待放行</span><span class="v" id="tilePending">0</span><span class="n" data-i18n="tile.pendingN">需要你决策</span></div>
+          <div class="tile"><span class="k" data-i18n="tile.events">事件总数</span><span class="v" id="tileEvents">0</span><span class="n" data-i18n="tile.eventsN">含历史</span></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-title" data-i18n="panel.agents">Agent  roster</span>
+            <span class="seg" style="margin-left:auto">
+              <button data-roster="all" class="on" data-i18n="roster.all">全部</button>
+              <button data-roster="active" data-i18n="roster.active">仅活跃</button>
+            </span>
+          </div>
+          <div class="panel-body" id="boardAgents"><div class="empty" data-i18n="empty.none">暂无数据</div></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title" data-i18n="panel.pending">待放行请求</span></div>
+          <div class="panel-body" id="boardPending"><div class="empty" data-i18n="empty.none">暂无数据</div></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title" data-i18n="panel.recent">最近事件</span></div>
+          <div class="panel-body" id="boardRecent"><div class="empty" data-i18n="empty.none">暂无数据</div></div>
+        </div>
+      </section>
+
+      <!-- approval desk -->
+      <section class="view hidden" id="view-desk">
+        <div class="view-head">
+          <div>
+            <h1 data-i18n="desk.title">放行台</h1>
+            <p class="sub" data-i18n="desk.sub">本机所有 Agent 的权限请求汇到一处。键盘 1–4 决策，全程不需要鼠标。</p>
+          </div>
+        </div>
+        <div id="queue"></div>
+      </section>
+
+      <!-- sessions -->
+      <section class="view hidden" id="view-sessions">
+        <div class="view-head">
+          <div>
+            <h1 data-i18n="sessions.title">会话</h1>
+            <p class="sub" data-i18n="sessions.sub">每个 Agent 可以并行多个会话。会话卡带工具调用与审批留痕；「继续此会话」经 Hub 命令总线直达 Agent。</p>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-body" id="sessionBody"><div class="empty" data-i18n="empty.none">暂无数据</div></div>
+        </div>
+        <div class="panel hidden" id="continueForm">
+          <div class="panel-head"><span class="panel-title" data-i18n="cont.title">继续此会话</span></div>
+          <div class="panel-body" style="padding:12px 16px">
+            <div class="sdesc" data-i18n="cont.target">目标会话</div>
+            <div class="mono-box" id="continueTarget" style="margin:6px 0 10px" data-no-i18n>—</div>
+            <textarea id="continueText" data-i18n-ph="cont.placeholder" placeholder="输入新任务…" style="margin-top:0"></textarea>
+            <div class="modal-actions">
+              <button class="btn" id="btnContinueCancel" data-i18n="cont.cancel">取消</button>
+              <button class="btn" id="btnContinueSend" data-i18n="cont.send">发送</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- terminal (PTY embedded via xterm.js + WebSocket) -->
+      <section class="view hidden" id="view-terminal">
+        <div class="view-head">
+          <div>
+            <h1 data-i18n="term.title">内嵌终端</h1>
+            <p class="sub" data-i18n="term.sub">xterm.js + ConPTY + WebSocket，可在 Hub 内直接交互式操作会话对应的工作目录（仅 claude_code / codex 支持）。</p>
+          </div>
+        </div>
+        <div class="panel">
+          <div id="termBar" style="display:flex;gap:8px;padding:8px 12px;background:var(--surface2);border-bottom:1px solid var(--line)">
+            <span class="panel-title" data-i18n="term.session">会话：</span>
+            <span id="termSession" style="font-family:var(--mono);font-size:12px;color:var(--amber)" data-no-i18n>—</span>
+            <button class="btn linkbtn" id="btnTermClear" data-i18n="term.clear">清屏</button>
+            <button class="btn primary" id="btnTermFocus" data-i18n="term.focus">聚焦终端</button>
+            <span id="termStatus" style="margin-left:auto;font-size:12px;color:var(--muted)" data-no-i18n>断开</span>
+          </div>
+          <div id="termContainer" style="height:calc(100vh - 144px);background:#000;border:1px solid var(--line);margin:0"></div>
+          <div class="panel hidden" id="termForm">
+            <div class="panel-head"><span class="panel-title" data-i18n="term.title">内嵌终端</span></div>
+            <div class="panel-body" style="padding:12px 16px">
+              <div class="sdesc" data-i18n="term.session">目标会话</div>
+              <div class="mono-box" id="termTarget" style="margin:6px 0 10px" data-no-i18n>—</div>
+              <textarea id="termInput" rows="3" data-i18n-ph="term.input" placeholder="输入命令并按回车…" style="width:100%;font-family:var(--mono);font-size:13px"></textarea>
+              <div class="modal-actions">
+                <button class="btn" id="btnTermInputCancel" data-i18n="cont.cancel">取消</button>
+                <button class="btn" id="btnTermInputSend" data-i18n="term.send">发送</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- tasks (F6 board) -->
+      <section class="view hidden" id="view-tasks">
+        <div class="view-head">
+          <div>
+            <h1 data-i18n="tasks.title">任务</h1>
+            <p class="sub" data-i18n="tasks.sub">全托管派发：选 Agent → 派发任务 → 观察执行 → 审批放行 → 完成，全程不出 Hub（D13）。</p>
+          </div>
+          <span class="seg" style="margin-left:auto">
+            <button id="btnQueuePause" data-i18n="tasks.pause">暂停派发</button>
+            <button id="btnQueueResume" data-i18n="tasks.resume">恢复派发</button>
+          </span>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title" data-i18n="tasks.dispatch">派发任务</span></div>
+          <div class="panel-body" style="padding:12px 16px">
+            <div class="frame-form">
+              <select id="task-kind">
+                <option value="claude_code">Claude Code</option>
+                <option value="codex">Codex</option>
+              </select>
+              <input id="task-cwd" type="text" placeholder="工作目录 D:\work\proj" data-no-i18n>
+              <textarea id="task-prompt" rows="3" placeholder="任务描述…" data-i18n-ph="tasks.promptPh"></textarea>
+              <button id="btnTaskDispatch" data-i18n="tasks.send">派发 →</button>
+              <pre id="task-result" class="mono" hidden></pre>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-title" data-i18n="tasks.ledger">任务台账</span>
+            <button class="btn" id="btnTasksRefresh" style="margin-left:auto" data-i18n="roster.all">全部</button>
+          </div>
+          <div class="panel-body" id="taskBody"><div class="empty" data-i18n="empty.none">暂无数据</div></div>
+        </div>
+      </section>
+
+      <!-- event stream -->
+      <section class="view hidden" id="view-stream">
+        <div class="view-head">
+          <div>
+            <h1 data-i18n="stream.title">事件流</h1>
+            <p class="sub" data-i18n="stream.sub">所有 Agent 的事件按时间顺序流动；daemon 生命周期内可回溯，持久审计在 SQLite。</p>
+          </div>
+        </div>
+        <div class="panel"><div class="panel-body" id="timeline"><div class="empty" data-i18n="empty.none">暂无数据</div></div></div>
+      </section>
+
+      <!-- rules -->
+      <section class="view hidden" id="view-rules">
+        <div class="view-head">
+          <div>
+            <h1 data-i18n="rules.title">放行规则</h1>
+            <p class="sub" data-i18n="rules.sub">「在该 session 下放行」与「放行 Always」会写成审批记忆，后续同类请求自动放行；高危操作永远不自动放行。</p>
+          </div>
+        </div>
+        <div class="panel"><div class="panel-body" id="ruleBody"><div class="empty" data-i18n="empty.none">暂无数据</div></div></div>
+      </section>
+
+      <!-- settings -->
+      <section class="view hidden" id="view-settings">
+        <div class="view-head">
+          <div>
+            <h1 data-i18n="settings.title">设置</h1>
+            <p class="sub" data-i18n="settings.sub">本机 daemon 的连接信息与界面偏好。</p>
+          </div>
+        </div>
+        <div class="panel"><div class="panel-body">
+          <div class="srow">
+            <div class="grow"><div class="stitle" data-i18n="set.daemon">daemon 地址</div><div class="sdesc" data-i18n="set.daemonDesc">API 与 WebSocket 共用同一 token</div></div>
+            <div class="mono-box" id="cfgAddr">—</div>
+          </div>
+          <div class="srow">
+            <div class="grow"><div class="stitle" data-i18n="set.token">访问 token</div><div class="sdesc" data-i18n="set.tokenDesc">由 daemon 注入本页；不要分享给他人</div></div>
+            <div class="mono-box" id="cfgToken">—</div>
+          </div>
+          <div class="srow">
+            <div class="grow"><div class="stitle" data-i18n="set.version">版本</div></div>
+            <div class="mono-box" id="cfgVersion">—</div>
+          </div>
+          <div class="srow">
+            <div class="grow"><div class="stitle" data-i18n="set.retention">会话保留期</div><div class="sdesc" data-i18n="set.retentionDesc">超过保留期的会话自动清理（决策 G）</div></div>
+            <div class="mono-box" id="cfgRetention">—</div>
+          </div>
+          <div class="srow">
+            <div class="grow"><div class="stitle" data-i18n="set.lang">界面语言</div><div class="sdesc" data-i18n="set.langDesc">默认跟随浏览器语言</div></div>
+            <div class="langseg">
+              <button data-lang-set="zh-CN">简体中文</button>
+              <button data-lang-set="en">English</button>
+              <button data-lang-set="ja">日本語</button>
+            </div>
+          </div>
+          <div class="srow srow-notify">
+            <div class="grow">
+              <div class="stitle" data-i18n="set.notifyDesktop">桌面通知</div>
+              <div class="sdesc" data-i18n="set.notifyDesktopDesc">在浏览器弹出权限请求、失败与任务完成提醒</div>
+            </div>
+            <div class="srow-ctrl">
+              <span class="mono-box" id="notifyState" data-no-i18n>—</span>
+              <button class="btn" id="btnNotifyEnable" data-i18n="set.notifyEnable">启用通知</button>
+            </div>
+          </div>
+          <div class="srow srow-notify">
+            <div class="grow">
+              <div class="stitle" data-i18n="set.notifyTask">任务完成通知</div>
+              <div class="sdesc" data-i18n="set.notifyTaskDesc">任务结束时推送提醒</div>
+            </div>
+            <div class="srow-ctrl">
+              <button class="btn tgl" id="btnNotifyTask" data-no-i18n>关</button>
+            </div>
+          </div>
+          <div class="srow srow-notify">
+            <div class="grow">
+              <div class="stitle" data-i18n="set.notifyPush">推送通知（Service Worker）</div>
+              <div class="sdesc" data-i18n="set.notifyPushDesc">关闭所有 Hub 标签页后仍可收到高危审批与失败提醒</div>
+            </div>
+            <div class="srow-ctrl">
+              <span class="mono-box" id="cfgNotifyPush" data-no-i18n>—</span>
+            </div>
+          </div>
+          <div class="srow srow-notify">
+            <div class="grow">
+              <div class="stitle" data-i18n="set.notifyFeishu">飞书 webhook</div>
+              <div class="sdesc" data-i18n="set.notifyFeishuDesc">服务端推送通道状态（daemon 侧发送）</div>
+            </div>
+            <div class="srow-ctrl">
+              <span class="mono-box" id="cfgNotifyFeishu" data-no-i18n>—</span>
+              <button class="btn" id="btnNotifyTest" data-i18n="set.notifyTest">发送测试</button>
+            </div>
+          </div>
+        </div></div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer class="statusline">
+    <span id="slAgent">—</span>
+    <span id="slState">—</span>
+    <span class="r">
+      <span id="slConn" data-i18n="sl.connecting">连接中…</span>
+      <span id="slVer"></span>
+    </span>
+  </footer>
+</div>
+
+<!-- deny modal -->
+<div class="overlay hidden" id="denyModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="denyTitle">
+    <div class="modal-head">
+      <div class="modal-title" id="denyTitle" data-i18n="deny.title">拒绝此请求</div>
+      <button class="iconbtn" data-action="denyCancel" aria-label="close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div data-i18n="deny.warn">拒绝后该工具调用不会执行。复验说明会写入审计记录。</div>
+      <div class="strip-cmd" id="denyCmd" style="margin-top:10px"></div>
+      <textarea id="denyNote" data-i18n-ph="deny.placeholder" placeholder="复验说明（可选）— 例如：不要删这个目录"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" data-action="denyCancel" data-i18n="deny.cancel">取消</button>
+      <button class="btn primary" data-action="denyConfirm" data-i18n="deny.confirm">确认拒绝</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts" aria-live="polite"></div>
+
+<script>
+"use strict";
+const BOOT = window.__TARMAC_BOOT__ || {token:"", version:"", addr:""};
+const TOKEN = BOOT.token || "";
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+/* ---------- i18n ---------- */
+const ROWS = [
+["· 放行台","· Clearance","· クリアランス"],
+["daemon","daemon","daemon"],
+["Agent","Agents","エージェント"],
+["待放行","Pending","承認待ち"],
+["会话","Sessions","セッション"],
+["连接中…","connecting…","接続中…"],
+["全局态势","Status Board","态势ボード"],
+["本机所有 Agent 的运行状态、待放行请求与最近事件，一屏看完。","Every agent on this machine — state, pending requests and recent events on one screen.","本机のすべての Agent の状態・承認待ち・最近のイベントを一枚の画面で。"],
+["在线 Agent","Agents online","オンライン Agent"],
+["活跃会话","Active sessions","アクティブセッション"],
+["需要你决策","Needs your decision","判断が必要"],
+["事件总数","Total events","イベント総数"],
+["含历史","including history","履歴を含む"],
+["Agent  roster","Agent roster","Agent 一覧"],
+["全部","All","すべて"],
+["仅活跃","Active only","アクティブのみ"],
+["总会话","All sessions","全会話"],
+["没有活跃会话","No active sessions","アクティブなセッションなし"],
+["待放行请求","Pending requests","承認待ちリクエスト"],
+["最近事件","Recent events","最近のイベント"],
+["暂无数据","No data yet","データなし"],
+["放行台","Clearance Desk","クリアランスデスク"],
+["本机所有 Agent 的权限请求汇到一处。键盘 1–4 决策，全程不需要鼠标。","All permission requests from every agent on this machine, in one place. Decide with keys 1–4 — no mouse needed.","本机のすべての Agent の権限リクエストを一ヵ所に。キー 1–4 で判断でき、マウスは不要。"],
+["每个 Agent 可以并行多个会话。会话卡带工具调用与审批留痕；「继续此会话」经 Hub 命令总线直达 Agent。","Each agent can run several sessions in parallel. Cards carry tool-call and approval history; \"Continue\" reaches the agent via the Hub command bus.","各 Agent は複数のセッションを並行できます。カードにはツール呼び出しと承認の履歴があり、「再開」は Hub 経由で Agent に届きます。"],
+["事件流","Event Stream","イベントストリーム"],
+["所有 Agent 的事件按时间顺序流动；daemon 生命周期内可回溯，持久审计在 SQLite。","Every agent's events in time order, replayable for the daemon's lifetime; durable audit lives in SQLite.","すべての Agent のイベントを時系列で。daemon の稼働中は遡及可能、永続監査は SQLite へ。"],
+["放行规则","Policy Rules","承認ルール"],
+["「在该 session 下放行」与「放行 Always」会写成审批记忆，后续同类请求自动放行；高危操作永远不自动放行。","\"Allow in this session\" and \"Allow always\" become approval memories; later matching requests are auto-allowed. High-risk operations are never auto-approved.","「このセッションで承認」と「常に承認」は承認メモリになり、以降の同一リクエストは自動承認。高リスク操作は自動承認されません。"],
+["设置","Settings","設定"],
+["本机 daemon 的连接信息与界面偏好。","Connection details and interface preferences for this machine's daemon.","本机 daemon の接続情報と表示設定。"],
+["daemon 地址","Daemon address","daemon アドレス"],
+["API 与 WebSocket 共用同一 token","API and WebSocket share one token","API と WebSocket は同一トークン"],
+["访问 token","Access token","アクセストークン"],
+["由 daemon 注入本页；不要分享给他人","Injected into this page by the daemon — do not share","daemon がこのページに注入。他人と共有しないでください"],
+["版本","Version","バージョン"],
+["会话保留期","Session retention","セッション保持期間"],
+["超过保留期的会话自动清理（决策 G）","Sessions older than the retention window are purged automatically","保持期間を過ぎたセッションは自動的に削除されます"],
+["界面语言","Interface language","表示言語"],
+["默认跟随浏览器语言","Follows the browser language by default","既定はブラウザの言語"],
+["拒绝此请求","Reject this request","このリクエストを拒否"],
+["拒绝后该工具调用不会执行。复验说明会写入审计记录。","The tool call will not run. Your note is written to the audit record.","拒否するとそのツール呼び出しは実行されません。メモは監査記録に残ります。"],
+["复验说明（可选）— 例如：不要删这个目录","Review note (optional) — e.g. do not delete this directory","再確認メモ（任意）— 例: このディレクトリを削除しないでください"],
+["取消","Cancel","キャンセル"],
+["确认拒绝","Confirm rejection","拒否を確定"],
+["放行一次","Allow once","一度だけ許可"],
+["该 session 下放行","Allow in this session","このセッションで許可"],
+["放行 Always","Allow always","常に許可"],
+["再次点击确认","Click again to confirm","もう一度クリックで確定"],
+["拒绝","Reject","拒否"],
+["decision: allow_once","decision: allow_once","decision: allow_once"],
+["decision: allow_session","decision: allow_session","decision: allow_session"],
+["decision: allow_always · 二次确认","decision: allow_always · double confirm","decision: allow_always · 二重確認"],
+["decision: reject_once · 复验说明写入 note","decision: reject_once · note recorded","decision: reject_once · note recorded"],
+["仅展示 · 需原窗口处理","Display only · handle in the original window","表示のみ · 元のウィンドウで処理"],
+["已连接","connected","接続済み"],
+["已断开","disconnected","切断"],
+["删除","delete","削除"],
+["桌面通知","Desktop notifications","デスクトップ通知"],
+["在浏览器弹出权限请求、失败与任务完成提醒","Pop a browser notification for permission requests, failures and task completion","権限リクエスト・失敗・タスク完了をブラウザ通知で知らせる"],
+["启用通知","Enable notifications","通知を有効にする"],
+["任务完成通知","Task-completion notifications","タスク完了通知"],
+["任务结束时推送提醒","Notify me when a task finishes","タスク終了時に通知する"],
+["飞书 webhook","Feishu webhook","Feishu Webhook"],
+["服务端推送通道状态（daemon 侧发送）","Server-side push channel status (sent by the daemon)","サーバー側プッシュ通知の状態（daemon が送信）"],
+["发送测试","Send test","テスト送信"],
+["继续此会话","Continue this session","このセッションを再開"],
+["目标会话","Target session","対象セッション"],
+["输入新任务…","Enter a new task…","新しいタスクを入力…"],
+["发送","Send","送信"],
+["未支持","Unsupported","非対応"],
+["未授权","Not allowed","未許可"],
+["已开启","On","有効"],
+["已拒绝","Blocked","拒否"],
+["开","On","オン"],
+["关","Off","オフ"],
+["已配置","Configured","設定済み"],
+["尾号","tail","末尾"],
+["未配置","Not configured","未設定"],
+["未知","Unknown","不明"],
+["请输入新任务内容","Enter a task to continue","再開するタスクを入力してください"],
+["已提交，等待 Agent 响应","Submitted — waiting for the agent","送信しました。Agent の応答を待っています"],
+["飞书测试消息已发送","Feishu test message sent","Feishu テストメッセージを送信しました"],
+["桌面通知已开启","Desktop notifications on","デスクトップ通知を有効にしました"],
+["桌面通知未获授权","Desktop notifications not allowed","デスクトップ通知が許可されていません"],
+["会话失败","Session failed","セッション失敗"],
+["任务完成","Task finished","タスク完了"],
+["错误","Error","エラー"],
+["永久放行需要二次确认：请再点击一次「放行 Always」","Permanent allow needs a second confirmation — click \"Allow always\" once more","永久許可には二次確認が必要です — もう一度「常に許可」をクリック"],
+["放行队列已清空 · 新请求会即时出现在这里","Clearance queue is empty — new requests appear here instantly","承認キューは空です — 新しいリクエストはここに即座に表示されます"],
+["days","days","日"],
+["推送通知（Service Worker）","Push notifications (Service Worker)","プッシュ通知（Service Worker）"],
+["关闭所有 Hub 标签页后仍可收到高危审批与失败提醒","High-risk approvals and failures reach you even with every Hub tab closed","Hub のタブを全て閉じても高リスク承認と失敗が届きます"],
+["分叉继续","Fork & continue","フォークして継続"],
+["在系统终端打开","Open in system terminal","システムターミナルで開く"],
+["查看会话","View session","セッションを表示"],
+["疑似失联","stale (no heartbeat)","応答なし（疑い）"],
+["会话详情","Session details","セッション詳細"],
+["以当前会话为父创建新会话（默认不 fork，此为显式操作）","Create a child session from this one (no fork by default — this is explicit)","このセッションを親にする（既定はフォークなしの明示操作）"],
+["已在系统终端打开","Terminal launched","ターミナルを起動しました"],
+["已创建分叉会话","Forked session created","フォークセッションを作成しました"],
+["该 Agent 类型无原生恢复命令，请在 Hub 内查看","This agent kind has no native resume command — view it in the Hub","この Agent にはネイティブ復帰コマンドがありません — Hub で表示してください"],
+["任务","Tasks","タスク"],
+["全托管派发：选 Agent → 派发任务 → 观察执行 → 审批放行 → 完成，全程不出 Hub（D13）。","Fully-managed dispatch: pick an agent → send the task → watch it run → approve → done, without leaving the Hub (D13).","完全管理のディスパッチ：Agent を選び → タスクを送り → 実行を観察 → 承認 → 完了。Hub から出ません（D13）。"],
+["暂停派发","Pause dispatch","ディスパッチ停止"],
+["恢复派发","Resume dispatch","ディスパッチ再開"],
+["派发任务","Dispatch a task","タスクをディスパッチ"],
+["任务描述…","Describe the task…","タスクの説明…"],
+["派发 →","Dispatch →","ディスパッチ →"],
+["任务台账","Task ledger","タスク台帳"],
+["已暂停","Paused","一時停止中"],
+["派发中…","Dispatching…","ディスパッチ中…"],
+["任务已入队","Task queued","タスクをキューに入れました"],
+["重试已入队","Retry queued","再試行をキューに入れました"],
+["已取消","Cancelled","キャンセルしました"],
+];
+const KV = {
+  en:{
+    "nav.board":"Board","nav.desk":"Desk","nav.sessions":"Sessions","nav.tasks":"Tasks","nav.stream":"Stream","nav.rules":"Rules","nav.settings":"Settings","nav.terminal":"Terminal","brand.sub":"· Clearance",
+    "tasks.title":"Tasks","tasks.sub":"Fully-managed dispatch: pick an agent → send the task → watch it run → approve → done, without leaving the Hub (D13).",
+    "tasks.pause":"Pause dispatch","tasks.resume":"Resume dispatch","tasks.dispatch":"Dispatch a task","tasks.promptPh":"Describe the task…","tasks.send":"Dispatch →","tasks.ledger":"Task ledger",
+    "set.notifyDesktop":"Desktop notifications",
+    "set.notifyDesktopDesc":"Pop a browser notification for permission requests, failures and task completion",
+    "set.notifyEnable":"Enable notifications",
+    "set.notifyTask":"Task-completion notifications",
+    "set.notifyTaskDesc":"Notify me when a task finishes",
+    "set.notifyPush":"Push notifications (Service Worker)",
+    "set.notifyPushDesc":"High-risk approvals and failures reach you even with every Hub tab closed",
+    "set.notifyFeishu":"Feishu webhook",
+    "set.notifyFeishuDesc":"Server-side push channel status (sent by the daemon)",
+    "set.notifyTest":"Send test",
+    "set.retention":"Session retention",
+    "set.retentionDesc":"Sessions older than the retention window are purged automatically",
+    "cont.title":"Continue this session",
+    "cont.target":"Target session",
+    "cont.placeholder":"Enter a new task…",
+    "cont.cancel":"Cancel",
+    "cont.send":"Send",
+    "term.title":"Embedded terminal","term.sub":"xterm.js + ConPTY + WebSocket, interact directly with the session working directory inside the Hub (claude_code / codex only).","term.session":"Session:","term.clear":"Clear","term.focus":"Focus terminal","term.input":"Type command…","term.send":"Send"
+  },
+  ja:{
+    "nav.board":"ボード","nav.desk":"デスク","nav.sessions":"セッション","nav.tasks":"タスク","nav.stream":"履歴","nav.rules":"ルール","nav.settings":"設定","brand.sub":"· クリアランス",
+    "tasks.title":"タスク","tasks.sub":"完全管理のディスパッチ：Agent を選び → タスクを送り → 実行を観察 → 承認 → 完了。Hub から出ません（D13）。",
+    "tasks.pause":"ディスパッチ停止","tasks.resume":"ディスパッチ再開","tasks.dispatch":"タスクをディスパッチ","tasks.promptPh":"タスクの説明…","tasks.send":"ディスパッチ →","tasks.ledger":"タスク台帳",
+    "set.notifyDesktop":"デスクトップ通知",
+    "set.notifyDesktopDesc":"権限リクエスト・失敗・タスク完了をブラウザ通知で知らせる",
+    "set.notifyEnable":"通知を有効にする",
+    "set.notifyTask":"タスク完了通知",
+    "set.notifyTaskDesc":"タスク終了時に通知する",
+    "set.notifyPush":"プッシュ通知（Service Worker）",
+    "set.notifyPushDesc":"Hub のタブを全て閉じても高リスク承認と失敗が届きます",
+    "set.notifyFeishu":"Feishu Webhook",
+    "set.notifyFeishuDesc":"サーバー側プッシュ通知の状態（daemon が送信）",
+    "set.notifyTest":"テスト送信",
+    "set.retention":"セッション保持期間",
+    "set.retentionDesc":"保持期間を過ぎたセッションは自動的に削除されます",
+    "cont.title":"このセッションを再開",
+    "cont.target":"対象セッション",
+    "cont.placeholder":"新しいタスクを入力…",
+    "cont.cancel":"キャンセル",
+    "cont.send":"送信"
+  },
+};
+const DICT = {en:{}, ja:{}, "zh-CN":{}};
+DICT.en["已重新派发任务"] = "Task re-dispatched in the same workspace";
+DICT.ja["已重新派发任务"] = "同じワークスペースでタスクを再投入しました";
+for (const r of ROWS){ DICT.en[r[0]]=r[1]; DICT.ja[r[0]]=r[2]; }
+for (const k in KV.en){ DICT.en[k]=KV.en[k]; DICT.ja[k]=KV.ja[k]; }
+const ZH_TITLE = "AgentHub · 放行台";
+const LANGS = ["zh-CN","en","ja"];
+let lang = "zh-CN";
+try {
+  const saved = localStorage.getItem("tarmac.lang");
+  const nav = (navigator.language||"").toLowerCase();
+  if (saved && LANGS.includes(saved)) lang = saved;
+  else if (nav.startsWith("ja")) lang = "ja";
+  else if (nav.startsWith("en")) lang = "en";
+} catch(e){}
+const t = s => DICT[lang][s] || s;
+
+function localize(){
+  document.documentElement.lang = lang;
+  document.documentElement.dataset.lang = lang;
+  document.title = lang === "zh-CN" ? ZH_TITLE : t(ZH_TITLE);
+  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walk.nextNode()) nodes.push(walk.currentNode);
+  for (const n of nodes){
+    if (!n.nodeValue || !n.nodeValue.trim()) continue;
+    const p = n.parentElement;
+    if (!p || /^(SCRIPT|STYLE|CODE|TEXTAREA)$/.test(p.tagName)) continue;
+    if (p.closest("[data-no-i18n]")) continue;
+    const key = n.nodeValue.trim();
+    if (DICT[lang][key]) n.nodeValue = n.nodeValue.replace(key, DICT[lang][key]);
+  }
+  for (const el of $$("[data-i18n]")){
+    const k = el.dataset.i18n;
+    if (DICT[lang][k]) el.textContent = DICT[lang][k];
+  }
+  for (const el of $$("[data-i18n-ph]")){
+    const k = el.dataset.i18nPh;
+    if (DICT[lang][k]) el.placeholder = DICT[lang][k];
+  }
+  for (const el of $$("[data-lang-set]")){
+    el.classList.toggle("on", el.dataset.langSet === lang);
+  }
+  $("#langBtn").textContent = lang === "zh-CN" ? "中" : lang === "en" ? "EN" : "JA";
+}
+function setLang(l){
+  lang = l;
+  try { localStorage.setItem("tarmac.lang", l); } catch(e){}
+  localize(); renderAll();
+}
+
+/* ---------- state ---------- */
+const S = {
+  events: [], sessions: [], agents: [], rules: [],
+  pending: new Map(),     // request_id -> payload
+  resolvedIds: new Set(), // keeps replays from resurrecting stale entries
+  confirmArm: new Set(),  // allow_always double-confirm (decision B)
+  tasks: [], tasksPaused: false,
+  selected: null,
+  denyFor: null,
+  rosterFilter: "all",
+  notifyFeishuConfigured: null,
+  notifyFeishuTail: "",
+  vapidPublicKey: "",
+  pushSupported: null,
+};
+
+/* ---------- api ---------- */
+async function api(path, opts){
+  const o = Object.assign({headers:{}}, opts||{});
+  o.headers["Authorization"] = "Bearer " + TOKEN;
+  if (opts && opts.body && !o.headers["Content-Type"]) o.headers["Content-Type"] = "application/json";
+  const r = await fetch(path, o);
+  if (!r.ok) {
+    let msg = path + " -> " + r.status;
+    try { const j = await r.json(); if (j && j.error) msg = String(j.error); } catch(e){}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+/* ---------- ws ---------- */
+let ws = null, wsRetry = 0;
+function connect(){
+  const url = BOOT.addr || ("ws://" + location.host + "/ws");
+  ws = new WebSocket(url + "?token=" + encodeURIComponent(TOKEN));
+  ws.onopen = () => { wsRetry = 0; setConn(true); };
+  ws.onclose = () => { setConn(false); setTimeout(connect, Math.min(8000, 500 * (++wsRetry))); };
+  ws.onerror = () => {};
+  ws.onmessage = ev => {
+    let m; try { m = JSON.parse(ev.data); } catch(e){ return; }
+    const e = wsToEvent(m);
+    if (e) onEvent(e, false);
+  };
+}
+// wsToEvent converts this daemon's WS envelope into the spec-shaped UIEvent
+// (mirroring exactly what the server-side event ring records).
+function wsToEvent(m){
+  if (!m || !m.type) return null;
+  const ts = (m.ts || Date.now()/1000|0) * 1000;
+  if (m.type === "hello") { setConn(true); return null; }
+  if (m.type === "frame.error") return {ts, type:"error", payload:{message:(m.method||"") + ": " + (m.error||"")}};
+  if (m.type === "permission.resolved"){
+    if (m.applied === false) return null;
+    return {ts, type:"permission_resolved", payload:{
+      request_id: m.requestId,
+      outcome: m.outcome === "approved" ? "allowed_once" : "rejected",
+      decided_by: "hub",
+      rule_scope: m.decision === "allow_session" ? "session" : (m.decision === "allow_always" || m.decision === "reject_always") ? "always" : "none",
+    }};
+  }
+  if (m.type === "agent.request") return {ts, type:"task", payload:{action:"dispatch", method:m.method, request_id:m.requestId}};
+  if (m.type === "agent.response") return {ts, type:"task", payload:{action:"finished", request_id:m.requestId}};
+  if (m.type === "task.refresh"){ return null; }
+  if (m.type === "frame.in"){
+    const p = m.params || {};
+    if (m.method === "tool_result") return {ts, type:"tool_result", agent:{kind:m.agentKind}, session_id:p.sessionId, payload:{tool:p.name, call_id:p.toolCallId}};
+    return null; // tool_call outcomes & status transitions arrive via frame.out
+  }
+  if (m.type === "frame.out"){
+    const p = m.params || {};
+    if (m.method === "session/request_permission") return {ts, type:"permission_request", session_id:p.sessionId, payload:{
+      request_id: p.requestId, tool: p.name, command: p.mainArg || p.commandPattern, risk: p.risk, reason: p.reason, capabilities:["answerable"]}};
+    if (m.method === "session/update") return {ts, type:"status", session_id:p.sessionId, payload:{state: mapState(p.status, p.isComplete)}};
+    if (m.method === "tool_call/approved" || m.method === "tool_call/rejected")
+      return {ts, type:"tool_call", session_id:p.sessionId, payload:{tool:p.name, call_id:p.toolCallId, action: m.method === "tool_call/approved" ? "approved" : "rejected"}};
+    return null;
+  }
+  return null;
+}
+function setConn(up){
+  const el = $("#slConn");
+  el.textContent = up ? t("已连接") : t("已断开");
+  el.style.color = up ? "var(--green)" : "var(--red)";
+}
+
+/* ---------- ingest ---------- */
+function onEvent(e, replay){
+  e._ts = Date.parse(e.ts) || Date.now();
+  S.events.push(e);
+  if (S.events.length > 2000) S.events = S.events.slice(-2000);
+
+  if (e.type === "permission_request"){
+    const p = e.payload || {};
+    if (!(replay && S.resolvedIds.has(p.request_id))){
+      S.pending.set(p.request_id, Object.assign({}, p, {agent: e.agent, session_id: e.session_id, ts: e.ts}));
+      if (!S.selected) S.selected = p.request_id;
+      if (!replay) toast(t("待放行") + ": " + (p.tool || ""));
+    }
+  } else if (e.type === "permission_resolved"){
+    const p = e.payload || {};
+    S.resolvedIds.add(p.request_id);
+    S.confirmArm.delete(p.request_id);
+    if (S.pending.delete(p.request_id) && S.selected === p.request_id){
+      S.selected = [...S.pending.keys()][0] || null;
+    }
+  } else if (e.type === "status"){
+    upsertSessionFromEvent(e);
+  } else if (e.type === "task" && e.payload && e.payload.task_id){
+    refreshTasks();
+  }
+  if (!replay) maybeNotify(e);
+  renderAll();
+}
+
+function upsertSessionFromEvent(e){
+  const p = e.payload || {};
+  const id = e.session_id || p.session_id || "";
+  if (!id) return;
+  let s = S.sessions.find(x => x.id === id);
+  if (!s){
+    s = {id, kind: (e.agent && e.agent.kind) || "", instance: "hub",
+         cwd: "", state: "", last: e.ts, created: e.ts};
+    S.sessions.push(s);
+  }
+  if (p.state) s.state = p.state;
+  if (p.cwd) s.cwd = p.cwd;
+  if (p.origin) s.origin = p.origin;
+  if (p.parent_session_id) s.parent = p.parent_session_id;
+  s.last = e._ts || Date.now();
+}
+
+/* ---------- render ---------- */
+const AGENT_LABEL = {claude_code:"Claude Code", codex:"Codex", dsh:"DSH", gemini_cli:"Gemini CLI", opencode:"OpenCode", cursor:"Cursor"};
+const label = k => AGENT_LABEL[k] || k || "—";
+const fmtTime = ts => { if (!ts) return ""; const d = new Date(ts); return isNaN(d) ? "" : d.toLocaleTimeString("zh-CN",{hour12:false}); };
+// mapState adapts this daemon's session statuses onto the spec 7-state machine.
+const mapState = (st, done) => done || st === "completed" || st === "closed" ? "finished"
+  : st === "running" ? "running"
+  : st === "awaiting_approval" ? "waiting_approval"
+  : st === "failed" ? "failed" : "idle";
+const kindOf = (agent, sessionID) => (agent && agent.kind)
+  || ((S.sessions.find(x => x.id === sessionID) || {}).kind) || "";
+const pillFor = st => {
+  const m = {running:"s-running", waiting_approval:"s-waiting_approval", dead:"s-dead", failed:"s-failed",
+             idle:"s-idle", finished:"s-finished", starting:"s-starting"};
+  return `<span class="pill ${m[st]||""}"><span class="dot"></span>${esc(st||"—")}</span>`;
+};
+
+function renderAll(){ renderCounts(); renderQueue(); renderBoard(); renderSessions(); renderTasks(); renderTimeline(); renderRules(); renderNotify(); renderStatusline(); }
+
+async function refreshTasks(){
+  try {
+    const j = await api("/api/tasks");
+    S.tasks = j.tasks || [];
+    S.tasksPaused = !!j.paused;
+    renderTasks();
+  } catch(e){ console.error("refreshTasks:", e); }
+}
+
+const TASK_ACTION = {
+  queued:   ["任务台账", ""],
+  running:  ["任务台账", ""],
+  finished: ["任务完成", ""],
+  failed:   ["会话失败", ""],
+  cancelled:["已取消", ""],
+};
+
+function renderTasks(){
+  const b = $("#taskBody");
+  if (!b) return;
+  const pauseBtn = $("#btnQueuePause"), resumeBtn = $("#btnQueueResume");
+  if (pauseBtn && resumeBtn){
+    pauseBtn.classList.toggle("on", S.tasksPaused);
+    resumeBtn.classList.toggle("on", !S.tasksPaused);
+  }
+  if (!S.tasks.length){
+    b.innerHTML = `<div class="empty">${esc(t("暂无数据"))}</div>`;
+    return;
+  }
+  b.innerHTML = S.tasks.map(taskRowHTML).join("");
+}
+
+function taskRowHTML(task){
+  const st = task.state || "queued";
+  const actions = [];
+  if (st === "failed") actions.push(`<button class="btn" data-action="taskRetry" data-id="${esc(task.id)}">↻</button>`);
+  if (st === "queued" || st === "running") actions.push(`<button class="btn" data-action="taskCancel" data-id="${esc(task.id)}">${esc(t("拒绝"))}</button>`);
+  if (task.sessionId) actions.push(`<a href="#" class="linkbtn" data-action="openSession" data-id="${esc(task.sessionId)}">${esc(t("查看会话"))}</a>`);
+  return `
+  <div class="row">
+    <div class="grow">
+      <div class="t1">${esc(task.id)}${task.prompt ? " · " + esc(String(task.prompt).slice(0, 60)) : ""}</div>
+      <div class="t2">${esc(label(task.agentKind))} · ${esc(task.cwd||"")}${task.error ? " · " + esc(task.error) : ""}</div>
+    </div>
+    ${pillFor(mapTaskState(st))}
+    <span class="strip-time">${esc(fmtTime((task.startedAt || task.createdAt || 0) * 1000))}</span>
+    <span style="display:flex;gap:6px;flex:0 0 auto">${actions.join("")}</span>
+  </div>`;
+}
+
+// mapTaskState renders the task state with the spec pills (finished green,
+// failed red, running green, queued idle).
+function mapTaskState(st){
+  switch(st){
+    case "running": return "running";
+    case "finished": return "finished";
+    case "failed": return "failed";
+    default: return "idle";
+  }
+}
+
+function renderCounts(){
+  const p = S.pending.size;
+  $("#stPending").textContent = p;
+  $("#tilePending").textContent = p;
+  $("#navBadge").textContent = p;
+  $("#navBadge").classList.toggle("hidden", p === 0);
+  $("#stSessions").textContent = S.sessions.length;
+  $("#tileSessions").textContent = S.sessions.filter(s => s.state === "running" || s.state === "waiting_approval").length;
+  $("#tileEvents").textContent = S.events.length;
+  const kinds = new Set([...S.sessions.map(s => s.kind), ...S.agents.map(a => a.kind)].filter(Boolean));
+  $("#stAgents").textContent = kinds.size;
+  $("#tileAgents").textContent = kinds.size;
+  $("#tileAgentsN").textContent = [...kinds].map(label).join(" · ") || "—";
+  $("#tileSessionsN").textContent = t("总会话") + " " + S.sessions.length;
+  updateRosterSeg();
+}
+
+function renderStatusline(){
+  const kinds = [...new Set([...S.agents.map(a => a.kind)].filter(Boolean))].map(label).join("/");
+  $("#slAgent").textContent = kinds || "—";
+  $("#slState").textContent = t("待放行") + " " + S.pending.size + " · " + t("会话") + " " + S.sessions.length;
+}
+
+function updateRosterSeg(){
+  $$("[data-roster]").forEach(b => b.classList.toggle("on", b.dataset.roster === S.rosterFilter));
+}
+
+function renderQueue(){
+  const box = $("#queue");
+  const list = [...S.pending.values()];
+  if (!list.length){
+    box.innerHTML = `<div class="empty">${esc(t("放行队列已清空 · 新请求会即时出现在这里"))}</div>`;
+    return;
+  }
+  box.innerHTML = list.map(r => stripHTML(r)).join("");
+}
+
+function stripHTML(r){
+  const sel = S.selected === r.request_id;
+  const tool = r.tool || "";
+  const cmd = r.command || "";
+  const cap = (r.capabilities || []);
+  const answerable = cap.includes("answerable");
+  const risk = r.risk || "low";
+  const sess = S.sessions.find(x => x.id === r.session_id);
+  const armed = S.confirmArm.has(r.request_id);
+  return `
+  <div class="strip ${sel ? "sel" : ""}" data-id="${esc(r.request_id)}" tabindex="0" role="button"
+       aria-selected="${sel}" aria-label="${esc(tool)}">
+    <div class="strip-head">
+      <span class="strip-id">${esc(r.request_id)}</span>
+      <span class="strip-tool">${esc(label(kindOf(r.agent, r.session_id)))} · ${esc(tool)}</span>
+      <span class="risk ${risk}">${esc(risk)}</span>
+      ${pillFor("waiting_approval")}
+      <span class="strip-time">${esc(fmtTime(r.ts))}</span>
+    </div>
+    ${cmd ? `<div class="strip-cmd">${esc(cmd)}</div>` : ""}
+    ${r.reason ? `<div class="strip-meta">${esc(r.reason)}</div>` : ""}
+    <div class="strip-meta">${esc(r.session_id || "")}${sess && sess.cwd ? "  ·  " + esc(sess.cwd) : ""}  ·  <a href="#" class="linkbtn" data-action="openSession" data-id="${esc(r.session_id || "")}">${esc(t("查看会话"))}</a></div>
+    ${answerable ? `<div class="dec-row">
+      <button class="dec allow" data-dec="allow" data-id="${esc(r.request_id)}">
+        <span class="k"><span class="keynum">1</span>${esc(t("放行一次"))}</span>
+        <span class="d">${esc(t("decision: allow_once"))}</span>
+      </button>
+      <button class="dec session" data-dec="allowSession" data-id="${esc(r.request_id)}">
+        <span class="k"><span class="keynum">2</span>${esc(t("该 session 下放行"))}</span>
+        <span class="d">${esc(t("decision: allow_session"))}</span>
+      </button>
+      <button class="dec always ${armed ? "arm" : ""}" data-dec="allowAlways" data-id="${esc(r.request_id)}">
+        <span class="k"><span class="keynum">3</span>${esc(armed ? t("再次点击确认") : t("放行 Always"))}</span>
+        <span class="d">${esc(t("decision: allow_always · 二次确认"))}</span>
+      </button>
+      <button class="dec deny" data-dec="deny" data-id="${esc(r.request_id)}">
+        <span class="k"><span class="keynum">4</span>${esc(t("拒绝"))}</span>
+        <span class="d">${esc(t("decision: reject_once · 复验说明写入 note"))}</span>
+      </button>
+    </div>` : `<div class="strip-meta" style="margin-top:8px">${esc(t("仅展示 · 需原窗口处理"))}</div>`}
+  </div>`;
+}
+
+function renderBoard(){
+  const ab = $("#boardAgents");
+  const active = s => s.state === "running" || s.state === "waiting_approval";
+  const shown = S.rosterFilter === "active" ? S.sessions.filter(active) : S.sessions;
+  if (!shown.length){
+    ab.innerHTML = `<div class="empty">${esc(t(S.rosterFilter === "active" && S.sessions.length ? "没有活跃会话" : "暂无数据"))}</div>`;
+  } else {
+    ab.innerHTML = shown.map(s => `
+      <div class="row">
+        <div class="grow">
+          <div class="t1">${esc(label(s.kind))} <span style="color:var(--faint);font-size:11px">${esc(s.instance||"")}</span></div>
+          <div class="t2">${esc(s.id)}${s.cwd ? "  ·  " + esc(s.cwd) : ""}</div>
+        </div>
+        ${pillFor(s.state)}
+      </div>`).join("");
+  }
+
+  const pb = $("#boardPending");
+  const pend = [...S.pending.values()];
+  pb.innerHTML = pend.length ? pend.map(r => `
+    <div class="row">
+      <div class="grow">
+        <div class="t1">${esc(label(kindOf(r.agent, r.session_id)))} · ${esc(r.tool||"")}</div>
+        <div class="t2">${esc(r.command || "")}</div>
+      </div>
+      <span class="risk ${r.risk||"low"}">${esc(r.risk||"low")}</span>
+      ${pillFor("waiting_approval")}
+    </div>`).join("") : `<div class="empty">${esc(t("暂无数据"))}</div>`;
+
+  const rb = $("#boardRecent");
+  const recent = S.events.slice(-12).reverse();
+  rb.innerHTML = recent.length ? recent.map(evHTML).join("") : `<div class="empty">${esc(t("暂无数据"))}</div>`;
+}
+
+function evHTML(e){
+  const p = e.payload || {};
+  let txt = "", detail = "";
+  switch(e.type){
+    case "permission_request": txt = `${label(kindOf(e.agent, e.session_id))} · ${p.tool||""}`; detail = p.command || p.request_id || ""; break;
+    case "permission_resolved": txt = `${p.outcome||""} · ${p.decided_by||""}`; detail = p.rule_scope && p.rule_scope !== "none" ? "rule_scope=" + p.rule_scope : (p.decision || ""); break;
+    case "status": txt = `${label(kindOf(e.agent, e.session_id))} → ${p.state||""}`; detail = e.session_id || ""; break;
+    case "tool_call": txt = `${p.tool||""}${p.action ? " · " + p.action : ""}`; detail = p.command || p.call_id || ""; break;
+    case "tool_result": txt = `${p.tool||""} · result`; detail = p.call_id || ""; break;
+    case "task": txt = `${p.action||"task"} · ${p.method||""}`; detail = p.request_id || ""; break;
+    case "error": txt = p.message ? String(p.message).slice(0,140) : "error"; detail = ""; break;
+    default: txt = e.type; detail = p.request_id || "";
+  }
+  return `<div class="ev">
+    <span class="ev-time">${esc(fmtTime(e.ts))}</span>
+    <span class="ev-kind">${esc(e.type)}</span>
+    <span class="ev-body"><span class="ev-text">${esc(txt)}</span><span class="ev-detail">${esc(detail)}</span></span>
+  </div>`;
+}
+
+// effectiveState applies the 假活 detection (PRD F4): a session that claims
+// to be running but had no activity for >120s is displayed as 疑似失联 —
+// the Hub never kills processes on its own (spec §3.3).
+const STALE_MS = 120000;
+function effectiveState(s){
+  if ((s.state === "running" || s.state === "waiting_approval") && s.last && (Date.now() - s.last) > STALE_MS) return "dead";
+  return s.state;
+}
+function sessionPill(s){
+  const st = effectiveState(s);
+  if (st === "dead"){
+    return `<span class="pill s-dead"><span class="dot"></span>⚠ ${esc(t("疑似失联"))}</span>`;
+  }
+  return pillFor(st);
+}
+function renderSessions(){
+  const b = $("#sessionBody");
+  if (!S.sessions.length){ b.innerHTML = `<div class="empty">${esc(t("暂无数据"))}</div>`; return; }
+  b.innerHTML = S.sessions.map(s => {
+    // Continue rides the Hub→agent command bus (needs a connector); fork is
+    // the explicit secondary action (PRD D14/Q-F5); the terminal button only
+    // shows for kinds with a native interactive resume (PRD F8/D15).
+    const canTerm = s.kind === "claude_code" || s.kind === "codex";
+    const open = S.openSession === s.id;
+    return `
+    <div class="row" data-action="toggleSession" data-id="${esc(s.id)}" style="cursor:pointer">
+      <div class="grow">
+        <div class="t1">${esc(s.id)}${s.title ? " · " + esc(s.title) : ""}</div>
+        <div class="t2">${esc(label(s.kind))} · ${esc(s.cwd||"")} · ${t("会话")}${" "}${s.turns != null ? s.turns : "—"}</div>
+      </div>
+      ${sessionPill(s)}
+      <button class="btn" data-action="sessionContinue" data-id="${esc(s.id)}">${esc(t("继续此会话"))}</button>
+      <button class="btn" data-action="sessionFork" data-id="${esc(s.id)}" title="${esc(t("以当前会话为父创建新会话（默认不 fork，此为显式操作）"))}">${esc(t("分叉继续"))}</button>
+      ${canTerm ? `<button class="btn" data-action="sessionTerminal" data-id="${esc(s.id)}">${esc(t("在系统终端打开"))}</button>` : ""}
+    </div>
+    ${open ? sessionDetailHTML(s) : ""}`;
+  }).join("");
+}
+
+// sessionDetailHTML is the Hub 内只读 session 视图 (PRD F8): header + the
+// session-filtered event tail.
+function sessionDetailHTML(s){
+  const evs = S.events.filter(e => e.session_id === s.id).slice(-50).reverse();
+  return `
+  <div style="background:var(--surface2);border-bottom:1px solid var(--line)">
+    <div style="padding:10px 16px">
+      <div class="strip-meta">${t("会话详情")} · ${esc(label(s.kind))} · ${esc(s.cwd||"")} · origin=${esc(s.origin||"—")}${s.parent ? " · fork←" + esc(s.parent) : ""} · tokens ${s.tokensIn||0}/${s.tokensOut||0}</div>
+    </div>
+    ${evs.length ? evs.map(evHTML).join("") : `<div class="empty">${esc(t("暂无数据"))}</div>`}
+  </div>`;
+}
+
+// refreshSessions re-pulls the session ledger (fork/continue flows).
+async function refreshSessions(){
+  try {
+    const se = await api("/api/sessions");
+    S.sessions = (se.sessions || []).map(s => ({
+      id: s.id, kind: s.agentKind || "claude_code", version: "", instance: "hub",
+      cwd: s.cwd, turns: s.turns, state: mapState(s.status),
+      title: s.title || "", origin: s.origin || "managed", parent: s.parentSessionId || "",
+      tokensIn: s.inputTokens || 0, tokensOut: s.outputTokens || 0,
+      last: (s.updatedAt || 0) * 1000, created: (s.createdAt || 0) * 1000
+    }));
+    renderAll();
+  } catch(e){ toast(String(e.message||e)); }
+}
+
+function renderTimeline(){
+  const b = $("#timeline");
+  if (!S.events.length){ b.innerHTML = `<div class="empty">${esc(t("暂无数据"))}</div>`; return; }
+  b.innerHTML = S.events.slice(-300).reverse().map(evHTML).join("");
+}
+
+function renderRules(){
+  const b = $("#ruleBody");
+  if (!S.rules.length){ b.innerHTML = `<div class="empty">${esc(t("暂无数据"))}</div>`; return; }
+  b.innerHTML = S.rules.map(r => `
+    <div class="rule-row">
+      <div class="grow">
+        <span class="rule-key">${esc(r.tool)}${r.arg_pattern && r.arg_pattern !== "*" ? "(" + esc(r.arg_pattern) + ")" : ""}</span>
+        <span class="rule-meta">  ${esc(label(r.agent_kind))}  ·  ${esc(r.scope)}${r.session_id ? "  ·  " + esc(r.session_id) : ""}</span>
+      </div>
+      <button class="linkbtn" data-action="delRule" data-id="${esc(r.id)}">${esc(t("删除"))}</button>
+    </div>`).join("");
+}
+
+/* ---------- notifications + continue ---------- */
+function lsGet(k, d){
+  try { const v = localStorage.getItem(k); return v == null ? d : v; } catch(e){ return d; }
+}
+function lsSet(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
+
+function renderNotify(){
+  const gate = !!(window.isSecureContext && ("Notification" in window));
+  let perm = "default";
+  if (gate){ try { perm = Notification.permission; } catch(e){ perm = "denied"; } }
+  const stateEl = $("#notifyState"), enableBtn = $("#btnNotifyEnable");
+  if (stateEl) stateEl.textContent = !gate ? t("未支持")
+    : perm === "granted" ? t("已开启")
+    : perm === "denied" ? t("已拒绝") : t("未授权");
+  if (enableBtn){
+    enableBtn.disabled = !gate || perm === "granted" || perm === "denied";
+    enableBtn.title = !gate ? t("未支持") : "";
+  }
+  const taskOn = lsGet("tarmac.notifyTask", "0") === "1";
+  const taskBtn = $("#btnNotifyTask");
+  if (taskBtn){
+    taskBtn.textContent = taskOn ? t("开") : t("关");
+    taskBtn.classList.toggle("on", taskOn);
+    taskBtn.setAttribute("aria-pressed", taskOn ? "true" : "false");
+  }
+  const pushEl = $("#cfgNotifyPush");
+  if (pushEl){
+    if (S.pushSupported === null) pushEl.textContent = t("未知");
+    else if (!S.pushSupported) pushEl.textContent = t("未支持");
+    else pushEl.textContent = t("已开启") + " · " + (lsGet("tarmac.notifyDesktop","0") === "1" ? "SW" : "tab");
+  }
+  const fei = $("#cfgNotifyFeishu");
+  if (fei){
+    if (S.notifyFeishuConfigured === null) fei.textContent = t("未知");
+    else if (S.notifyFeishuConfigured) fei.textContent = t("已配置") + " · " + t("尾号") + " " + (S.notifyFeishuTail || "—");
+    else fei.textContent = t("未配置");
+  }
+}
+
+function urlB64ToUint8Array(base64String){
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+// Desktop Web Notification policy (live, non-replayed events only). Bodies
+// carry only summaries — never command text or tool output.
+function maybeNotify(e){
+  try {
+    if (!(window.isSecureContext && ("Notification" in window))) return;
+    if (Notification.permission !== "granted") return;
+    if (lsGet("tarmac.notifyDesktop", "0") !== "1") return;
+    const p = e.payload || {};
+    const type = e.type || "";
+    const kind = kindOf(e.agent, e.session_id);
+    const sid = String(e.session_id || "");
+    const short = sid.slice(0, 8);
+    const rid = p.request_id || p.call_id || "";
+    let act = "", immediate = false, taskDone = false;
+    if (type === "permission_request"){
+      act = t("待放行"); immediate = true;
+    } else if (type === "status"){
+      const st = p.state || "";
+      if (st === "failed" || st === "dead"){ act = t("会话失败"); immediate = true; }
+      else if (st === "finished"){ act = t("任务完成"); taskDone = true; }
+      else return;
+    } else if (type === "error"){
+      act = t("错误"); immediate = true;
+    } else if (type === "task" && p.action === "finished"){
+      act = t("任务完成"); taskDone = true;
+    } else return;
+    if (!immediate && !(taskDone && lsGet("tarmac.notifyTask", "0") === "1")) return;
+
+    const bits = [];
+    if (kind) bits.push(label(kind));
+    if (type === "permission_request" && p.tool) bits.push(String(p.tool));
+    else if (p.state) bits.push(String(p.state));
+    else if (p.action) bits.push(String(p.action));
+    if (p.risk) bits.push("risk:" + p.risk);
+    if (short) bits.push(short);
+    const n = new Notification("AgentHub · " + act, {
+      body: bits.join(" · "),
+      tag: "agenthub:" + type + ":" + sid + ":" + rid,
+      renotify: true,
+    });
+    n.onclick = () => { try { window.focus(); } catch(err){} setView("desk"); };
+  } catch(err){ /* a broken notification API must never break event rendering */ }
+}
+
+async function loadNotifyStatus(){
+  try {
+    const j = await api("/api/notify/status");
+    S.notifyFeishuConfigured = !!j.feishu;
+    S.notifyFeishuTail = typeof j.feishu_tail === "string" ? j.feishu_tail : "";
+    S.vapidPublicKey = typeof j.vapid_public_key === "string" ? j.vapid_public_key : "";
+    S.pushSupported = !!j.push;
+    const ret = $("#cfgRetention");
+    if (ret) ret.textContent = j.retention_days > 0 ? j.retention_days + " " + "days" : "∞";
+  } catch(e){
+    S.notifyFeishuConfigured = null; // unknown — never break the first paint
+    S.notifyFeishuTail = "";
+  }
+  renderNotify();
+}
+
+let continueId = null;
+function openContinue(id){
+  continueId = id;
+  $("#continueTarget").textContent = id;
+  $("#continueText").value = "";
+  $("#continueForm").classList.remove("hidden");
+  try { $("#continueText").focus(); } catch(e){}
+}
+function closeContinue(){
+  $("#continueForm").classList.add("hidden");
+  continueId = null;
+}
+async function sendContinue(){
+  if (!continueId) return;
+  const text = $("#continueText").value.trim();
+  if (!text){ toast(t("请输入新任务内容")); return; }
+  const btn = $("#btnContinueSend");
+  if (btn) btn.disabled = true;
+  try {
+    // PRD F7 "继续此会话": F6 task-* sessions re-dispatch a fresh task in the
+    // same workspace; managed ACP sessions ride the Hub→agent command bus;
+    // attached claude_code/codex resume via the vendor's native headless
+    // command. The endpoint reports which path it took via "mode".
+    const j = await api("/api/sessions/" + encodeURIComponent(continueId) + "/continue",
+      {method:"POST", body: JSON.stringify({text})});
+    toast(j && j.mode === "task-redispatch" ? t("已重新派发任务") : t("已提交，等待 Agent 响应"));
+    closeContinue();
+    refreshSessions();
+    if (j && j.mode === "task-redispatch") refreshTasks();
+  } catch(e){ toast(String(e.message||e)); }
+  finally { if (btn) btn.disabled = false; }
+}
+async function testNotify(){
+  const btn = $("#btnNotifyTest");
+  if (btn) btn.disabled = true;
+  try {
+    await api("/api/notify/test", {method:"POST", body: JSON.stringify({text:"AgentHub 通知测试"})});
+    toast(t("飞书测试消息已发送"));
+  } catch(e){ toast(String(e.message||e)); }
+  finally { if (btn) btn.disabled = false; }
+}
+
+/* ---------- actions ---------- */
+// decide maps the four clearance options onto this daemon's decision
+// vocabulary; allowAlways enforces decision B's double confirmation by
+// arming the button on the first click.
+async function decide(id, choice, note){
+  const decMap = {allow:"allow_once", allowSession:"allow_session", allowAlways:"allow_always", deny:"reject_once"};
+  const body = {decision: decMap[choice] || choice, note: note || ""};
+  if (choice === "allowAlways" && S.confirmArm.has(id)) body.confirm = true;
+  try {
+    const res = await api("/api/permission-requests/" + encodeURIComponent(id) + "/decision",
+      {method:"POST", body: JSON.stringify(body)});
+    if (res && res.requiresConfirmation){
+      S.confirmArm.add(id);
+      toast(t("永久放行需要二次确认：请再点击一次「放行 Always」"));
+      renderQueue();
+      return;
+    }
+    S.pending.delete(id);
+    S.confirmArm.delete(id);
+    if (S.selected === id) S.selected = [...S.pending.keys()][0] || null;
+    renderAll();
+    // Session/always verdicts become rules — keep the 规则 view honest
+    // without waiting for the next full reload (决策闭环 §3.2).
+    if (choice === "allowAlways" || choice === "allowSession"){
+      try { S.rules = (await api("/api/rules")).rules || []; renderRules(); } catch(e){}
+    }
+  } catch(e){ toast(String(e.message||e)); }
+}
+function openDeny(id){
+  S.denyFor = id;
+  const r = S.pending.get(id);
+  $("#denyCmd").textContent = (r && r.command) || "";
+  $("#denyNote").value = "";
+  $("#denyModal").classList.remove("hidden");
+  $("#denyNote").focus();
+}
+function closeDeny(){ $("#denyModal").classList.add("hidden"); S.denyFor = null; }
+
+function setView(v){
+  $$(".view").forEach(el => el.classList.add("hidden"));
+  const el = $("#view-" + v);
+  if (el) el.classList.remove("hidden");
+  $$(".navbtn[data-view]").forEach(b => b.classList.toggle("on", b.dataset.view === v));
+  if (v === "tasks") refreshTasks();
+  if (v === "sessions") refreshSessions();
+}
+function toast(msg){
+  const wrap = $("#toasts");
+  const el = document.createElement("div");
+  el.className = "toast"; el.textContent = msg;
+  wrap.appendChild(el);
+  const all = wrap.querySelectorAll(".toast");
+  if (all.length > 3) all[0].remove();
+  setTimeout(() => { el.remove(); }, 4200);
+}
+
+/* ---------- events ---------- */
+$("#rail").addEventListener("click", e => {
+  const b = e.target.closest("[data-view]");
+  if (b) setView(b.dataset.view);
+});
+$("#langBtn").addEventListener("click", () => {
+  const i = LANGS.indexOf(lang);
+  setLang(LANGS[(i+1)%LANGS.length]);
+});
+$$("[data-lang-set]").forEach(b => b.addEventListener("click", () => setLang(b.dataset.langSet)));
+
+$("#queue").addEventListener("click", e => {
+  const d = e.target.closest("[data-dec]");
+  if (d){
+    const choice = d.dataset.dec;
+    if (choice === "deny") openDeny(d.dataset.id);
+    else decide(d.dataset.id, choice);
+    return;
+  }
+  const s = e.target.closest(".strip");
+  if (s){ S.selected = s.dataset.id; renderQueue(); }
+});
+$("#queue").addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.classList.contains("strip")){
+    S.selected = e.target.dataset.id; renderQueue();
+  }
+});
+$("#denyModal").addEventListener("click", e => {
+  const a = e.target.closest("[data-action]")?.dataset.action;
+  if (!a) return;
+  if (a === "denyCancel") closeDeny();
+  if (a === "denyConfirm"){
+    const id = S.denyFor;
+    const note = $("#denyNote").value.trim();
+    closeDeny();
+    if (id) decide(id, "deny", note);
+  }
+});
+document.addEventListener("click", e => {
+  const rb = e.target.closest("[data-roster]");
+  if (rb){
+    S.rosterFilter = rb.dataset.roster;
+    updateRosterSeg();
+    renderBoard();
+  }
+  const a = e.target.closest("[data-action]")?.dataset.action;
+  if (a === "delRule"){
+    const id = e.target.closest("[data-action]").dataset.id;
+    api("/api/rules/" + encodeURIComponent(id), {method:"DELETE"})
+      .then(() => { S.rules = S.rules.filter(r => String(r.id) !== String(id)); renderRules(); })
+      .catch(err => toast(String(err.message||err)));
+  }
+  if (a === "sessionContinue"){
+    const el = e.target.closest('[data-action="sessionContinue"]');
+    if (el && !el.disabled) openContinue(el.dataset.id);
+  }
+  if (a === "toggleSession"){
+    const id = e.target.closest("[data-action]").dataset.id;
+    S.openSession = S.openSession === id ? null : id;
+    renderSessions();
+  }
+  if (a === "openSession"){
+    // 放行条 → 会话视图跳转入口 (PRD F8: 三处入口之一)
+    S.openSession = e.target.closest("[data-action]").dataset.id;
+    setView("sessions");
+  }
+  if (a === "sessionFork"){
+    const el = e.target.closest('[data-action="sessionFork"]');
+    if (!el) return;
+    api("/api/sessions/" + encodeURIComponent(el.dataset.id) + "/fork", {method:"POST"})
+      .then(() => { toast(t("已创建分叉会话")); refreshSessions(); })
+      .catch(err => toast(String(err.message||err)));
+  }
+  if (a === "sessionTerminal"){
+    const el = e.target.closest('[data-action="sessionTerminal"]');
+    if (!el) return;
+    openTerminal(el.dataset.id);
+  }
+});
+
+$("#btnNotifyEnable").addEventListener("click", () => {
+  const gate = !!(window.isSecureContext && ("Notification" in window));
+  if (!gate){ lsSet("tarmac.notifyDesktop", "0"); renderNotify(); return; }
+  const apply = async perm => {
+    if (perm === "granted"){
+      lsSet("tarmac.notifyDesktop", "1");
+      // PRD F9/M1.5: Service Worker + Web Push keeps notifications alive
+      // when every Hub tab is closed.
+      try {
+        if (S.pushSupported && S.vapidPublicKey && "serviceWorker" in navigator){
+          const reg = await navigator.serviceWorker.register("/sw.js");
+          const sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlB64ToUint8Array(S.vapidPublicKey),
+          });
+          await api("/api/push/subscribe", {method:"POST", body: JSON.stringify(sub.toJSON())});
+        }
+      } catch(e){ /* push failures must not block desktop notifications */ }
+      toast(t("桌面通知已开启"));
+    }
+    else { lsSet("tarmac.notifyDesktop", "0"); toast(t("桌面通知未获授权")); }
+    renderNotify();
+  };
+  let ret;
+  try {
+    if (Notification.requestPermission.length > 0){
+      Notification.requestPermission(p => apply(p));
+      return;
+    }
+    ret = Notification.requestPermission();
+  } catch(err){ apply("denied"); return; }
+  if (ret && typeof ret.then === "function") ret.then(p => apply(p)).catch(() => apply("denied"));
+  else apply(ret || "denied");
+});
+$("#btnNotifyTask").addEventListener("click", () => {
+  const on = lsGet("tarmac.notifyTask", "0") === "1";
+  lsSet("tarmac.notifyTask", on ? "0" : "1");
+  renderNotify();
+});
+$("#btnNotifyTest").addEventListener("click", testNotify);
+$("#btnTaskDispatch").addEventListener("click", async () => {
+  const kind = $("#task-kind").value;
+  const cwd = $("#task-cwd").value.trim();
+  const prompt = $("#task-prompt").value.trim();
+  if (!cwd || !prompt){ toast(t("请输入新任务内容")); return; }
+  const btn = $("#btnTaskDispatch");
+  btn.disabled = true;
+  try {
+    await api("/api/tasks", {method:"POST", body: JSON.stringify({agentKind: kind, cwd, prompt})});
+    toast(t("任务已入队"));
+    $("#task-prompt").value = "";
+    refreshTasks();
+  } catch(e){ toast(String(e.message||e)); }
+  finally { btn.disabled = false; }
+});
+$("#btnTasksRefresh").addEventListener("click", refreshTasks);
+$("#btnQueuePause").addEventListener("click", async () => {
+  try { await api("/api/tasks/queue/pause", {method:"POST"}); S.tasksPaused = true; renderTasks(); } catch(e){ toast(String(e.message||e)); }
+});
+$("#btnQueueResume").addEventListener("click", async () => {
+  try { await api("/api/tasks/queue/resume", {method:"POST"}); S.tasksPaused = false; renderTasks(); refreshTasks(); } catch(e){ toast(String(e.message||e)); }
+});
+document.addEventListener("click", e => {
+  const a = e.target.closest('[data-action="taskRetry"]');
+  if (a){
+    api("/api/tasks/" + encodeURIComponent(a.dataset.id) + "/retry", {method:"POST"})
+      .then(() => { toast(t("重试已入队")); refreshTasks(); })
+      .catch(err => toast(String(err.message||err)));
+  }
+  const c = e.target.closest('[data-action="taskCancel"]');
+  if (c){
+    api("/api/tasks/" + encodeURIComponent(c.dataset.id) + "/cancel", {method:"POST"})
+      .then(() => { toast(t("已取消")); refreshTasks(); })
+      .catch(err => toast(String(err.message||err)));
+  }
+});
+$("#btnContinueCancel").addEventListener("click", closeContinue);
+$("#btnContinueSend").addEventListener("click", sendContinue);
+
+document.addEventListener("keydown", e => {
+  if (e.target.matches("textarea,input")) {
+    if (e.key === "Escape") e.target.blur();
+    return;
+  }
+  if (!$("#denyModal").classList.contains("hidden")){
+    if (e.key === "Escape") closeDeny();
+    return;
+  }
+  const k = e.key;
+  if (k === "1" || k === "2" || k === "3" || k === "4"){
+    const id = S.selected || [...S.pending.keys()][0];
+    if (!id) return;
+    const map = {1:"allow", 2:"allowSession", 3:"allowAlways", 4:"deny"};
+    if (map[k] === "deny") openDeny(id); else decide(id, map[k]);
+    e.preventDefault();
+    return;
+  }
+  if (k === "j" || k === "ArrowDown"){
+    const ids = [...S.pending.keys()];
+    if (!ids.length) return;
+    const i = ids.indexOf(S.selected);
+    S.selected = ids[Math.min(ids.length-1, i+1)];
+    renderQueue(); e.preventDefault();
+  }
+  if (k === "k" || k === "ArrowUp"){
+    const ids = [...S.pending.keys()];
+    if (!ids.length) return;
+    const i = ids.indexOf(S.selected);
+    S.selected = ids[Math.max(0, i-1)];
+    renderQueue(); e.preventDefault();
+  }
+});
+
+/* ---------- boot ---------- */
+$("#cfgAddr").textContent = location.host;
+$("#cfgToken").textContent = TOKEN ? TOKEN.slice(0,10) + "…" + TOKEN.slice(-6) : "—";
+$("#cfgVersion").textContent = BOOT.version || "—";
+$("#slVer").textContent = BOOT.version || "";
+$("#stDaemon").textContent = "online";
+
+async function initialLoad(){
+  try {
+    const [ev, se, ag, ru] = await Promise.all([
+      api("/api/events"), api("/api/sessions"), api("/api/agents"), api("/api/rules")
+    ]);
+    S.events = (ev.events || []);
+    for (const e of S.events) e._ts = Date.parse(e.ts) || Date.now();
+    S.sessions = (se.sessions || []).map(s => ({
+      id: s.id, kind: s.agentKind || "claude_code", version: "", instance: "hub",
+      cwd: s.cwd, turns: s.turns, state: mapState(s.status),
+      title: s.title || "", origin: s.origin || "managed", parent: s.parentSessionId || "",
+      tokensIn: s.inputTokens || 0, tokensOut: s.outputTokens || 0,
+      last: (s.updatedAt || 0) * 1000, created: (s.createdAt || 0) * 1000
+    }));
+    S.agents = ag.agents || [];
+    S.rules = ru.rules || [];
+    // rebuild pending from unresolved permission_request events in the ring
+    S.resolvedIds = new Set();
+    for (const e of S.events) if (e.type === "permission_resolved") S.resolvedIds.add(e.payload?.request_id);
+    for (const e of S.events){
+      if (e.type === "permission_request" && !S.resolvedIds.has(e.payload?.request_id)){
+        const p = e.payload || {};
+        S.pending.set(p.request_id, Object.assign({}, p, {agent: e.agent, session_id: e.session_id, ts: e.ts}));
+      }
+    }
+    // ENV-3: pendings that predate the ring (daemon restart) survive in
+    // SQLite — merge them so the operator never loses an awaiting decision.
+    // DB rows carry the pattern, not the full command text (ring-only).
+    try {
+      const pr = await api("/api/permission-requests?outcome=pending");
+      for (const r of (pr.permissionRequests || [])){
+        if (!S.resolvedIds.has(r.requestId) && !S.pending.has(r.requestId)){
+          S.pending.set(r.requestId, {
+            request_id: r.requestId, tool: r.toolName, command: r.commandPattern,
+            risk: r.risk, reason: r.reason, session_id: r.sessionId,
+            capabilities: ["answerable"],
+          });
+        }
+      }
+    } catch(err){}
+    if (S.pending.size && !S.selected) S.selected = [...S.pending.keys()][0];
+  } catch(e){ toast(String(e.message||e)); }
+  localize(); renderAll(); connect();
+  loadNotifyStatus(); // fire-and-forget; must never break the first paint
+
+  /* ---------- terminal (xterm.js + ConPTY + WS) ---------- */
+  const term = new Terminal({cursorBlink:true,fontSize:13,fontFamily:'var(--mono)',theme:{background:'#000000'}});
+  let termWs = null, termSessionId = null, termAttach = null;
+  const termContainer = document.getElementById('termContainer');
+  const termBar = document.getElementById('termBar');
+  const termStatus = document.getElementById('termStatus');
+  const termSessionEl = document.getElementById('termSession');
+  term.open(termContainer);
+  term.fit();
+  window.addEventListener('resize', () => term.fit());
+  term.onData(d => {
+    if (termWs && termWs.readyState === WebSocket.OPEN) termWs.send(d);
+  });
+
+  function openTerminal(sessionId){
+    if (termWs && termWs.readyState === WebSocket.OPEN) termWs.close();
+    termSessionId = sessionId;
+    termSessionEl.textContent = sessionId;
+    termStatus.textContent = t("已连接");
+    termStatus.style.color = "var(--green)";
+    term.clear();
+    setView("terminal");
+    const wsUrl = (BOOT.addr || ("ws://" + location.host + "/ws")).replace(/^http/,"ws") +
+      "/api/sessions/" + encodeURIComponent(sessionId) + "/terminal-ws?token=" + encodeURIComponent(TOKEN);
+    termWs = new WebSocket(wsUrl);
+    termWs.binaryType = "arraybuffer";
+    termWs.onopen = () => { term.attach(term); termAttach = true; };
+    termWs.onmessage = ev => {
+      let data;
+      if (ev.data instanceof ArrayBuffer) data = new Uint8Array(ev.data);
+      else if (typeof ev.data === "string") data = new TextEncoder().encode(ev.data);
+      else return;
+      term.write(new TextDecoder().decode(data));
+    };
+    termWs.onerror = () => { termStatus.textContent = t("已断开"); termStatus.style.color = "var(--red)"; };
+    termWs.onclose = () => { termAttach = false; termWs = null; termStatus.textContent = t("已断开"); termStatus.style.color = "var(--muted)"; };
+  }
+
+  document.getElementById('btnTermClear').addEventListener('click', () => term.clear());
+  document.getElementById('btnTermFocus').addEventListener('click', () => term.focus());
+
+}
+initialLoad();
+// 假活检测需要时钟推进：每 30s 重算状态丸（PRD F4）。
+setInterval(() => { if (S.sessions.length) renderAll(); }, 30000);
+</script>
+</body>
+</html>

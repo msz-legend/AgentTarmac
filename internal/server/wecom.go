@@ -13,42 +13,62 @@ import (
 	"github.com/agenttarmac/agenttarmac/internal/acpclient"
 )
 
-// WecomNotifier is the WeCom (企业微信) group-bot channel (PRD D17/M2):
-// same policy as Feishu — high-risk approvals and session failures only,
-// daemon-side delivery, 30s quiet window, outbox dedup.
+// wecomTransport abstracts the two official WeCom delivery protocols:
+//   - group-bot Webhook (HTTP POST, legacy "群机器人")
+//   - AI bot long connection (WebSocket: aibot_subscribe -> aibot_send_msg,
+//     "智能机器人" BotID + Secret; developer.work.weixin.qq.com/document/path/101463)
+//
+// Tail returns a masked identifier (last 6 chars) for the settings view. It
+// must never expose the secret.
+type wecomTransport interface {
+	Post(ctx context.Context, text string) error
+	Tail() string
+}
+
+// WecomNotifier is the WeCom (企业微信) channel (PRD D17/M2): same policy as
+// Feishu — high-risk approvals and session failures only, daemon-side
+// delivery, 30s quiet window, outbox dedup. The transport is pluggable so the
+// same policy covers both the group-bot webhook and the AI-bot long connection.
 type WecomNotifier struct {
-	webhookURL string // https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…
-	store      *acpclient.Store
-	client     *http.Client
-	log        *log.Logger
+	transport wecomTransport
+	store     *acpclient.Store
+	log       *log.Logger
 
 	quietMu    sync.Mutex
 	quietUntil map[string]time.Time
 }
 
-// NewWecomNotifier creates the WeCom channel.
-func NewWecomNotifier(webhookURL string, store *acpclient.Store, logger *log.Logger) *WecomNotifier {
+func newWecomNotifier(t wecomTransport, store *acpclient.Store, logger *log.Logger) *WecomNotifier {
 	if logger == nil {
 		logger = log.Default()
 	}
 	return &WecomNotifier{
-		webhookURL: webhookURL,
+		transport:  t,
 		store:      store,
-		client:     &http.Client{Timeout: 10 * time.Second},
 		log:        logger,
 		quietUntil: map[string]time.Time{},
 	}
 }
 
-// WebhookTail returns the last 6 chars for masked display.
+// NewWecomNotifier creates the legacy group-bot Webhook channel.
+func NewWecomNotifier(webhookURL string, store *acpclient.Store, logger *log.Logger) *WecomNotifier {
+	return newWecomNotifier(&wecomWebhookTransport{
+		url:    webhookURL,
+		client: &http.Client{Timeout: 10 * time.Second},
+	}, store, logger)
+}
+
+// NewWecomAibotNotifier creates the AI-bot (智能机器人) long-connection channel.
+func NewWecomAibotNotifier(cfg WecomAibotConfig, store *acpclient.Store, logger *log.Logger) *WecomNotifier {
+	return newWecomNotifier(NewWecomAibotTransport(cfg), store, logger)
+}
+
+// WebhookTail returns the last 6 chars of a masked identifier for display.
 func (n *WecomNotifier) WebhookTail() string {
-	if n == nil || n.webhookURL == "" {
+	if n == nil || n.transport == nil {
 		return ""
 	}
-	if len(n.webhookURL) > 6 {
-		return n.webhookURL[len(n.webhookURL)-6:]
-	}
-	return n.webhookURL
+	return n.transport.Tail()
 }
 
 func (n *WecomNotifier) suppressed(kind, sessionID string) bool {
@@ -65,7 +85,7 @@ func (n *WecomNotifier) suppressed(kind, sessionID string) bool {
 
 // NotifyPermissionRequest pushes one high-risk approval.
 func (n *WecomNotifier) NotifyPermissionRequest(sessionID, toolName, risk, reason string) {
-	if n == nil || n.webhookURL == "" {
+	if n == nil || n.transport == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -79,7 +99,7 @@ func (n *WecomNotifier) NotifyPermissionRequest(sessionID, toolName, risk, reaso
 
 // NotifySessionFailed pushes a session failure.
 func (n *WecomNotifier) NotifySessionFailed(sessionID, reason string) {
-	if n == nil || n.webhookURL == "" {
+	if n == nil || n.transport == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -93,10 +113,10 @@ func (n *WecomNotifier) NotifySessionFailed(sessionID, reason string) {
 
 // Test sends a test message from the settings view.
 func (n *WecomNotifier) Test(ctx context.Context) error {
-	if n == nil || n.webhookURL == "" {
-		return fmt.Errorf("wecom webhook not configured")
+	if n == nil || n.transport == nil {
+		return fmt.Errorf("wecom notifier not configured")
 	}
-	return n.post(ctx, "AgentHub 通知测试：企微通道正常。")
+	return n.transport.Post(ctx, "AgentHub 通知测试：企微通道正常。")
 }
 
 func (n *WecomNotifier) send(ctx context.Context, body, tailHash, sessionID string) {
@@ -105,7 +125,7 @@ func (n *WecomNotifier) send(ctx context.Context, body, tailHash, sessionID stri
 			return
 		}
 	}
-	if err := n.post(ctx, body); err != nil {
+	if err := n.transport.Post(ctx, body); err != nil {
 		if n.log != nil {
 			n.log.Printf("wecom notify failed: %v", err)
 		}
@@ -124,14 +144,31 @@ func (n *WecomNotifier) send(ctx context.Context, body, tailHash, sessionID stri
 	}
 }
 
-func (n *WecomNotifier) post(ctx context.Context, text string) error {
+/* ---------- 企业微信群机器人（Webhook） ---------- */
+
+type wecomWebhookTransport struct {
+	url    string
+	client *http.Client
+}
+
+func (t *wecomWebhookTransport) Tail() string {
+	if len(t.url) > 6 {
+		return t.url[len(t.url)-6:]
+	}
+	return t.url
+}
+
+func (t *wecomWebhookTransport) Post(ctx context.Context, text string) error {
+	if t.url == "" {
+		return fmt.Errorf("wecom webhook not configured")
+	}
 	raw, _ := json.Marshal(map[string]any{"msgtype": "text", "text": map[string]string{"content": text}})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.webhookURL, bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.url, bytes.NewReader(raw))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := n.client.Do(req)
+	resp, err := t.client.Do(req)
 	if err != nil {
 		return err
 	}

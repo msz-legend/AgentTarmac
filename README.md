@@ -28,6 +28,34 @@ go build -o agenthubd.exe ./cmd/agenthubd
 | `-retention-days` | `90` | 会话保留天数，`0` 关闭清理（决策 G） |
 | `-feishu-webhook` / `$AGENTHUB_FEISHU_WEBHOOK` | 空 | 飞书自定义机器人 webhook（决策 F） |
 | `-feishu-secret` / `$AGENTHUB_FEISHU_SECRET` | 空 | 飞书机器人加签密钥 |
+| `-wecom-aibot-id` / `$AGENTHUB_WECOM_AIBOT_ID` | 空 | 企微**智能机器人** BotID（长连接通道，推荐） |
+| `-wecom-aibot-secret` / `$AGENTHUB_WECOM_AIBOT_SECRET` | 空 | 企微智能机器人 Secret |
+| `-wecom-aibot-chat-id` / `$AGENTHUB_WECOM_AIBOT_CHAT_ID` | 空 | 目标会话：单聊填 userid，群聊填 chatid |
+| `-wecom-aibot-chat-type` / `$AGENTHUB_WECOM_AIBOT_CHAT_TYPE` | `1` | `1`=单聊 / `2`=群聊 / `0`=省略字段 |
+| `-wecom-webhook` / `$AGENTHUB_WECOM_WEBHOOK` | 空 | 企微**群机器人**完整 Webhook URL（旧通道） |
+
+#### 企业微信通知：两种协议不要混用
+
+企业微信有两套互不相通的机器人协议，配置错会分别报 `93000: invalid webhook url` 或 `853000: invalid bot_id or secret`：
+
+| | 智能机器人（长连接，推荐） | 群机器人（Webhook） |
+|---|---|---|
+| 凭据 | BotID + Secret | Webhook URL（含 `key=`） |
+| 协议 | `wss://openws.work.weixin.qq.com`：`aibot_subscribe` → `aibot_send_msg` | `POST https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...` |
+| 参数 | `-wecom-aibot-*` 四个 | `-wecom-webhook` |
+| 前置 | 用户需先在目标会话给机器人发过至少一条消息 | 无 |
+
+```powershell
+$env:AGENTHUB_WECOM_AIBOT_ID       = '<BotID>'
+$env:AGENTHUB_WECOM_AIBOT_SECRET   = '<Secret>'
+$env:AGENTHUB_WECOM_AIBOT_CHAT_ID  = '<userid 或 chatid>'
+$env:AGENTHUB_WECOM_AIBOT_CHAT_TYPE = '1'   # 单聊
+.\agenthubd.exe
+# 控制台「设置 → 通知」点测试，或：
+# POST /api/notify/test   → {"channel":"wecom","ok":true}
+```
+
+两个通道共用同一套通知策略：仅高危审批与会话失败即时推送、任务完成可开关、30s 静默窗口、24h 去重；`GET /api/notify/status` 的 `wecom_tail` 只回显 BotID 尾 6 位，Secret 永不外显。官方协议见 `developer.work.weixin.qq.com/document/path/101463`（限频 30 条/分、1000 条/小时，markdown 正文 ≤20480 字节）。
 
 ### 接入真实 Agent（stdio 连接器）
 
@@ -68,6 +96,9 @@ $env:AGENTHUB_TOKEN = (Get-Content data\token)
 | `GET /api/sessions` / `GET /api/sessions/{id}/export` | 会话列表 / 归档导出（决策 G） |
 | `GET/DELETE /api/approval-memory[/{id}]` | 审批记忆查询 / 撤销 |
 | `GET /api/approvals` / `GET /api/notifications` | 判决审计 / 通知记录 |
+| `GET /api/notify/status` / `POST /api/notify/test` | 通知通道状态 / 外发测试（企微·飞书） |
+| `POST /api/tasks` · `POST /api/sessions/{id}/continue` | 任务派发 / 会话续跑 |
+| `GET /api/sessions/{id}/terminal-ws` | 内嵌终端（WebSocket + PTY，Windows） |
 
 全部鉴权路由需 `Authorization: Bearer <token>`（WS 支持 `?token=`）。
 

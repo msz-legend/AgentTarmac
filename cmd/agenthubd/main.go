@@ -38,10 +38,18 @@ func main() {
 		wecomWebhook  = flag.String("wecom-webhook", "", "WeCom group-bot full webhook URL (default: $AGENTHUB_WECOM_WEBHOOK; PRD M2)")
 		wecomBotID    = flag.String("wecom-bot-id", "", "WeCom group-bot id (default: $AGENTHUB_WECOM_BOT_ID)")
 		wecomBotToken = flag.String("wecom-bot-token", "", "WeCom group-bot token (used as webhook key; default: $AGENTHUB_WECOM_BOT_TOKEN)")
-		taskConc      = flag.Int("task-concurrency", 2, "max concurrently running managed tasks (PRD F6)")
-		relayURL      = flag.String("relay", "", "self-hosted relay URL (wss://host/relay/hub/<id>?token=…; PRD D8, default off)")
-		feishuWebhook = flag.String("feishu-webhook", "", "Feishu custom-bot webhook URL (default: $AGENTHUB_FEISHU_WEBHOOK)")
-		feishuSecret  = flag.String("feishu-secret", "", "Feishu custom-bot sign secret (default: $AGENTHUB_FEISHU_SECRET)")
+		// WeCom AI bot (智能机器人) long-connection channel. Bot ID + Secret
+		// are NOT a webhook: they authenticate a subscribe frame over
+		// wss://openws.work.weixin.qq.com (official doc path/101463).
+		wecomAibotID       = flag.String("wecom-aibot-id", "", "WeCom AI bot id (default: $AGENTHUB_WECOM_AIBOT_ID)")
+		wecomAibotSecret   = flag.String("wecom-aibot-secret", "", "WeCom AI bot secret (default: $AGENTHUB_WECOM_AIBOT_SECRET)")
+		wecomAibotChatID   = flag.String("wecom-aibot-chat-id", "", "WeCom AI bot target chat: userid for single chat, chatid for group (default: $AGENTHUB_WECOM_AIBOT_CHAT_ID)")
+		wecomAibotChatType = flag.Int("wecom-aibot-chat-type", 1, "WeCom AI bot chat type: 1=single, 2=group, 0=omit (default: $AGENTHUB_WECOM_AIBOT_CHAT_TYPE)")
+		wecomAibotWSURL    = flag.String("wecom-aibot-ws-url", "", "override WeCom AI bot WS endpoint (tests/private deployment; default: $AGENTHUB_WECOM_AIBOT_WS_URL)")
+		taskConc           = flag.Int("task-concurrency", 2, "max concurrently running managed tasks (PRD F6)")
+		relayURL           = flag.String("relay", "", "self-hosted relay URL (wss://host/relay/hub/<id>?token=…; PRD D8, default off)")
+		feishuWebhook      = flag.String("feishu-webhook", "", "Feishu custom-bot webhook URL (default: $AGENTHUB_FEISHU_WEBHOOK)")
+		feishuSecret       = flag.String("feishu-secret", "", "Feishu custom-bot sign secret (default: $AGENTHUB_FEISHU_SECRET)")
 	)
 	flag.Parse()
 
@@ -105,27 +113,61 @@ func main() {
 		srv.SetNotifier(server.NewFeishuNotifier(webhook, secret, store, logger))
 		logger.Printf("feishu webhook notifier enabled")
 	}
-	wecom := os.Getenv("AGENTHUB_WECOM_WEBHOOK")
-	if *wecomWebhook != "" {
-		wecom = *wecomWebhook
-	} else {
-		botID := os.Getenv("AGENTHUB_WECOM_BOT_ID")
-		if *wecomBotID != "" {
-			botID = *wecomBotID
+	// AI bot (long connection) takes precedence when configured. Bot ID +
+	// Secret are credentials for a WebSocket subscribe frame; they are NOT a
+	// group-bot webhook key (feeding the secret into webhook/send yields
+	// errcode 93000 "invalid webhook url").
+	aibotID := firstNonEmpty(*wecomAibotID, os.Getenv("AGENTHUB_WECOM_AIBOT_ID"))
+	aibotSecret := firstNonEmpty(*wecomAibotSecret, os.Getenv("AGENTHUB_WECOM_AIBOT_SECRET"))
+	aibotChatID := firstNonEmpty(*wecomAibotChatID, os.Getenv("AGENTHUB_WECOM_AIBOT_CHAT_ID"))
+	aibotChatType := *wecomAibotChatType
+	// An explicit -wecom-aibot-chat-type flag wins over the env var; otherwise
+	// env may override the default of 1. flag.Visit distinguishes "set to 1"
+	// from "left at the default 1".
+	flagSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "wecom-aibot-chat-type" {
+			flagSet = true
 		}
-		tok := os.Getenv("AGENTHUB_WECOM_BOT_TOKEN")
-		if *wecomBotToken != "" {
-			tok = *wecomBotToken
-		}
-		if botID != "" || tok != "" {
-			// From Bot ID + Token: WeCom group bot send URL is
-			// https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=<token>
-			wecom = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=" + tok
+	})
+	if !flagSet {
+		if raw := os.Getenv("AGENTHUB_WECOM_AIBOT_CHAT_TYPE"); raw != "" {
+			if v, err := strconv.Atoi(raw); err == nil {
+				aibotChatType = v
+			}
 		}
 	}
-	if wecom != "" {
-		srv.SetWecomNotifier(server.NewWecomNotifier(wecom, store, logger))
-		logger.Printf("wecom webhook notifier enabled")
+	aibotWSURL := firstNonEmpty(*wecomAibotWSURL, os.Getenv("AGENTHUB_WECOM_AIBOT_WS_URL"))
+	if aibotID != "" || aibotSecret != "" || aibotChatID != "" {
+		if aibotID == "" || aibotSecret == "" || aibotChatID == "" {
+			logger.Fatalf("wecom aibot: -wecom-aibot-id, -wecom-aibot-secret and -wecom-aibot-chat-id are all required together")
+		}
+		srv.SetWecomNotifier(server.NewWecomAibotNotifier(server.WecomAibotConfig{
+			BotID:    aibotID,
+			Secret:   aibotSecret,
+			ChatID:   aibotChatID,
+			ChatType: aibotChatType,
+			WSURL:    aibotWSURL,
+		}, store, logger))
+		logger.Printf("wecom aibot notifier enabled (long connection, bot tail %s)", maskTail(aibotID))
+	} else {
+		wecom := os.Getenv("AGENTHUB_WECOM_WEBHOOK")
+		if *wecomWebhook != "" {
+			wecom = *wecomWebhook
+		} else {
+			botID := firstNonEmpty(*wecomBotID, os.Getenv("AGENTHUB_WECOM_BOT_ID"))
+			tok := firstNonEmpty(*wecomBotToken, os.Getenv("AGENTHUB_WECOM_BOT_TOKEN"))
+			if tok != "" {
+				// From Bot ID + Token: WeCom group bot send URL is
+				// https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=<token>
+				wecom = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=" + tok
+			}
+			_ = botID // retained for config parity; the webhook key is the token
+		}
+		if wecom != "" {
+			srv.SetWecomNotifier(server.NewWecomNotifier(wecom, store, logger))
+			logger.Printf("wecom webhook notifier enabled")
+		}
 	}
 
 	// Runtime adapters (decision A): Claude Code + Codex; ACP-native CLIs
@@ -232,6 +274,24 @@ func parseDays(s string) int {
 		return 90
 	}
 	return n
+}
+
+// firstNonEmpty returns the first non-empty string (flag beats env).
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// maskTail shows only the last 6 chars of a credential in logs.
+func maskTail(s string) string {
+	if len(s) > 6 {
+		return s[len(s)-6:]
+	}
+	return s
 }
 
 // resolveToken uses the CLI flag, then $AGENTHUB_TOKEN, then generates a token

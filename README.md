@@ -99,8 +99,16 @@ $env:AGENTHUB_TOKEN = (Get-Content data\token)
 | `GET /api/notify/status` / `POST /api/notify/test` | 通知通道状态 / 外发测试（企微·飞书） |
 | `POST /api/tasks` · `POST /api/sessions/{id}/continue` | 任务派发 / 会话续跑 |
 | `GET /api/sessions/{id}/terminal-ws` | 内嵌终端（WebSocket + PTY，Windows） |
+| `GET /api/fs/roots` · `GET /api/fs/list?path=` | 服务端只读目录浏览（Web 端选目录降级路径） |
+| `GET /api/fs/recent` · `POST /api/fs/recent` | 最近工作目录记忆（最多 8 条，落盘 `<data>/recent_cwd.json`） |
 
 全部鉴权路由需 `Authorization: Bearer <token>`（WS 支持 `?token=`）。
+
+### 派发任务的工作目录
+
+- **PC（Electron 桌面壳）**：点「选择目录…」弹系统原生目录选择框（`desktop/preload.js` 通过 `contextBridge` 暴露 `window.tarmac.pickDirectory()`，主进程 `ipcMain.handle("tarmac:pick-directory")` 调 `dialog.showOpenDialog`）。`nodeIntegration: false`、`contextIsolation: true` 不变。
+- **Web 端**：浏览器拿不到绝对路径，降级为服务端只读目录浏览器（盘符快捷按钮 → 子目录 → 上级目录 → 「使用此目录」）；也可直接在输入框手打。
+- 最近路径同时呈现在输入框的 `datalist` 下拉与「最近路径…」`<select>` 中；派发成功或选目录成功即写回 `recent_cwd.json`，刷新页面后自动预填第一条。
 
 ## 架构
 
@@ -108,8 +116,9 @@ $env:AGENTHUB_TOKEN = (Get-Content data\token)
 cmd/agenthubd          daemon：HTTP+WS、鉴权、内嵌控制台、保留期、通知
 cmd/agenthub-connect   stdio↔daemon 连接器（桥接真实 ACP agent）
 internal/acpclient     BaseAdapter（Claude Code / Codex）+ 审批门控 + SQLite 7 表
-internal/server        Bridge（适配器注册/帧分发/WS 广播）+ Web + 飞书
+internal/server        Bridge（适配器注册/帧分发/WS 广播）+ Web + 飞书 / 企微 + fsbrowser
 internal/connector     JSON-RPC over stdio 协议层（含进程内假 agent 集成测试）
+desktop/preload.js     Electron contextBridge：原生目录选择框（PC 端）
 ```
 
 数据模型：`sessions` / `tool_calls` / `permission_requests` / `approval_history` / `approval_memory` / `notifications` / `migrations`。

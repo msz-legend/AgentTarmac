@@ -5,7 +5,7 @@
 //   3. 打开原生窗口加载控制台（Token 由服务端 BOOT 注入，localStorage 作兜底）。
 "use strict";
 
-const { app, BrowserWindow, shell, dialog } = require("electron");
+const { app, BrowserWindow, shell, dialog, ipcMain } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
 const http = require("http");
@@ -204,7 +204,11 @@ function createWindow(token) {
     backgroundColor: "#0f1115",
     title: TITLE,
     icon: findIcon(),
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, "preload.js"),
+    },
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url); // 外链走系统浏览器
@@ -236,6 +240,15 @@ function cleanup() {
     } catch (_) {}
   }
 }
+
+// PC 端原生目录选择：供 Web console 的“工作目录”浏览按钮调用。
+ipcMain.handle("tarmac:pick-directory", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    properties: ["openDirectory", "createDirectory"],
+    defaultPath: "",
+  });
+  return { canceled: !!canceled, filePaths };
+});
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();

@@ -40,6 +40,7 @@ type Server struct {
 	http          *http.Server
 	ptySessions   map[string]*pty.Session
 	ptyMu         sync.Mutex
+	fsBrowser     *fsBrowser
 }
 
 //go:embed web
@@ -98,6 +99,12 @@ func (s *Server) SetTasks(q TaskQueue) { s.tasks = q }
 
 // SetRetention records the session retention policy (settings view, 决策 G).
 func (s *Server) SetRetention(days int) { s.retentionDays = days }
+
+// SetFSBrowser attaches the server-side directory browser / recent-CWD memory.
+// Called once at daemon boot with the same -data directory as the store.
+func (s *Server) SetFSBrowser(dataDir string) {
+	s.fsBrowser = newFsBrowser(dataDir)
+}
 
 // EmitFrame implements acpclient.Sink: outbound adapter frames are broadcast
 // to WS subscribers and recorded into the console event ring. Permission
@@ -251,6 +258,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notify/test", s.auth(s.handleNotifyTest))
 	mux.HandleFunc("POST /api/push/subscribe", s.auth(s.handlePushSubscribe))
 	mux.HandleFunc("GET /sw.js", s.handleSW)
+
+	// File-system browser for task dispatch working-directory selection
+	// (PC + Web). Read-only browse + persistent recent-directory memory.
+	mux.HandleFunc("GET /api/fs/roots", s.auth(s.handleFSRoots))
+	mux.HandleFunc("GET /api/fs/list", s.auth(s.handleFSList))
+	mux.HandleFunc("GET /api/fs/recent", s.auth(s.handleFSRecentList))
+	mux.HandleFunc("POST /api/fs/recent", s.auth(s.handleFSRecentAdd))
 
 	mux.HandleFunc("GET /ws", s.auth(s.handleWS))
 

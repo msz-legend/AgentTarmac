@@ -94,6 +94,9 @@ func main() {
 	// approvals land in the same inbox.
 	queue := tasks.New(store, bridge, runnerSink{bridge: bridge}, resolveHookCommand(*hookPath), *taskConc)
 	srv.SetTasks(queue)
+
+	// File-system browser + recent-CWD memory for task dispatch (PC + Web).
+	srv.SetFSBrowser(*data)
 	if hookCmd := resolveHookCommand(*hookPath); hookCmd != "" {
 		logger.Printf("task queue ready (concurrency %d, managed CC approvals via hub-hook)", *taskConc)
 	} else {

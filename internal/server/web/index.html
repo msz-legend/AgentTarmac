@@ -434,7 +434,13 @@ textarea:focus{outline:none;border-color:var(--amber-dim)}
                 <option value="claude_code">Claude Code</option>
                 <option value="codex">Codex</option>
               </select>
-              <input id="task-cwd" type="text" placeholder="工作目录 D:\work\proj" data-no-i18n>
+              <div class="cwd-picker" style="display:flex;align-items:center;gap:8px">
+                <input id="task-cwd" type="text" list="cwd-recent" placeholder="工作目录 D:\work\proj" data-no-i18n style="flex:1" autocomplete="off">
+                <select id="cwd-recent-select" title="最近路径" style="max-width:180px"><option value="" data-i18n="tasks.recent">最近路径…</option></select>
+                <button id="btnPickCwd" type="button" data-i18n="tasks.pickDir">选择目录…</button>
+                <input id="task-webcwd" type="file" webkitdirectory style="display:none" data-no-i18n>
+              </div>
+              <datalist id="cwd-recent"></datalist>
               <textarea id="task-prompt" rows="3" placeholder="任务描述…" data-i18n-ph="tasks.promptPh"></textarea>
               <button id="btnTaskDispatch" data-i18n="tasks.send">派发 →</button>
               <pre id="task-result" class="mono" hidden></pre>
@@ -580,6 +586,26 @@ textarea:focus{outline:none;border-color:var(--amber-dim)}
 
 <div class="toast-wrap" id="toasts" aria-live="polite"></div>
 
+<!-- directory picker (Web fallback for the native OS folder dialog) -->
+<div class="overlay hidden" id="fsModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="fsTitle" style="max-width:640px">
+    <div class="modal-head">
+      <div class="modal-title" id="fsTitle" data-i18n="fs.title">选择工作目录</div>
+      <button class="iconbtn" id="fsClose" aria-label="close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="mono" id="fsPath" data-no-i18n style="margin-bottom:8px;word-break:break-all"></div>
+      <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap" id="fsRoots"></div>
+      <div id="fsList" data-no-i18n style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:6px"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="fsUp" data-i18n="fs.up" disabled>上级目录</button>
+      <button class="btn" id="fsCancel" data-i18n="deny.cancel">取消</button>
+      <button class="btn primary" id="fsChoose" data-i18n="fs.choose">使用此目录</button>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 const BOOT = window.__TARMAC_BOOT__ || {token:"", version:"", addr:""};
@@ -709,7 +735,8 @@ const KV = {
   en:{
     "nav.board":"Board","nav.desk":"Desk","nav.sessions":"Sessions","nav.tasks":"Tasks","nav.stream":"Stream","nav.rules":"Rules","nav.settings":"Settings","nav.terminal":"Terminal","brand.sub":"· Clearance",
     "tasks.title":"Tasks","tasks.sub":"Fully-managed dispatch: pick an agent → send the task → watch it run → approve → done, without leaving the Hub (D13).",
-    "tasks.pause":"Pause dispatch","tasks.resume":"Resume dispatch","tasks.dispatch":"Dispatch a task","tasks.promptPh":"Describe the task…","tasks.send":"Dispatch →","tasks.ledger":"Task ledger",
+    "tasks.pause":"Pause dispatch","tasks.resume":"Resume dispatch","tasks.dispatch":"Dispatch a task","tasks.promptPh":"Describe the task…","tasks.send":"Dispatch →","tasks.pickDir":"Pick folder…","tasks.recent":"Recent…","tasks.ledger":"Task ledger",
+    "fs.title":"Choose working directory","fs.up":"Up","fs.choose":"Use this folder","fs.empty":"(no subfolders)",
     "set.notifyDesktop":"Desktop notifications",
     "set.notifyDesktopDesc":"Pop a browser notification for permission requests, failures and task completion",
     "set.notifyEnable":"Enable notifications",
@@ -732,7 +759,8 @@ const KV = {
   ja:{
     "nav.board":"ボード","nav.desk":"デスク","nav.sessions":"セッション","nav.tasks":"タスク","nav.stream":"履歴","nav.rules":"ルール","nav.settings":"設定","brand.sub":"· クリアランス",
     "tasks.title":"タスク","tasks.sub":"完全管理のディスパッチ：Agent を選び → タスクを送り → 実行を観察 → 承認 → 完了。Hub から出ません（D13）。",
-    "tasks.pause":"ディスパッチ停止","tasks.resume":"ディスパッチ再開","tasks.dispatch":"タスクをディスパッチ","tasks.promptPh":"タスクの説明…","tasks.send":"ディスパッチ →","tasks.ledger":"タスク台帳",
+    "tasks.pause":"ディスパッチ停止","tasks.resume":"ディスパッチ再開","tasks.dispatch":"タスクをディスパッチ","tasks.promptPh":"タスクの説明…","tasks.send":"ディスパッチ →","tasks.pickDir":"フォルダーを選択…","tasks.recent":"最近…","tasks.ledger":"タスク台帳",
+    "fs.title":"作業ディレクトリを選択","fs.up":"上位","fs.choose":"このフォルダーを使う","fs.empty":"(サブフォルダーなし)",
     "set.notifyDesktop":"デスクトップ通知",
     "set.notifyDesktopDesc":"権限リクエスト・失敗・タスク完了をブラウザ通知で知らせる",
     "set.notifyEnable":"通知を有効にする",
@@ -769,6 +797,29 @@ try {
 } catch(e){}
 const t = s => DICT[lang][s] || s;
 
+/* i18n 原文快照：DICT["zh-CN"] 为空，旧的 localize() 会把中文文本替换成
+   英/日之后无法还原（切回中文仍是外文）。启动时记下中文原文，localize()
+   每次都从原文出发翻译，保证三语任意来回切换都正确。 */
+const I18N_SRC = new WeakMap();
+function captureI18NSource(){
+  for (const el of $$("[data-i18n]")){
+    if (!el.dataset.i18nZh) el.dataset.i18nZh = el.textContent;
+    const k = el.dataset.i18n;                       // 中文原文也登记为 zh-CN 词条
+    if (k && !DICT["zh-CN"][k]) DICT["zh-CN"][k] = el.dataset.i18nZh;
+  }
+  for (const el of $$("[data-i18n-ph]")){
+    if (!el.dataset.i18nPhZh) el.dataset.i18nPhZh = el.placeholder;
+    const k = el.dataset.i18nPh;
+    if (k && !DICT["zh-CN"][k]) DICT["zh-CN"][k] = el.dataset.i18nPhZh;
+  }
+  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (walk.nextNode()){
+    const n = walk.currentNode;
+    if (n.nodeValue && !I18N_SRC.has(n)) I18N_SRC.set(n, n.nodeValue);
+  }
+}
+captureI18NSource();
+
 function localize(){
   document.documentElement.lang = lang;
   document.documentElement.dataset.lang = lang;
@@ -780,17 +831,21 @@ function localize(){
     if (!n.nodeValue || !n.nodeValue.trim()) continue;
     const p = n.parentElement;
     if (!p || /^(SCRIPT|STYLE|CODE|TEXTAREA)$/.test(p.tagName)) continue;
-    if (p.closest("[data-no-i18n]")) continue;
-    const key = n.nodeValue.trim();
-    if (DICT[lang][key]) n.nodeValue = n.nodeValue.replace(key, DICT[lang][key]);
+    if (p.closest("[data-no-i18n]") || p.closest("[data-i18n],[data-i18n-ph]")) continue;
+    const src = I18N_SRC.get(n) || n.nodeValue;      // 始终以中文原文为基准
+    const key = src.trim();
+    const to = DICT[lang][key];
+    n.nodeValue = to ? src.replace(key, to) : src;    // 中文时即还原原文
   }
   for (const el of $$("[data-i18n]")){
     const k = el.dataset.i18n;
-    if (DICT[lang][k]) el.textContent = DICT[lang][k];
+    const zh = el.dataset.i18nZh || el.textContent;
+    el.textContent = DICT[lang][k] || zh;
   }
   for (const el of $$("[data-i18n-ph]")){
     const k = el.dataset.i18nPh;
-    if (DICT[lang][k]) el.placeholder = DICT[lang][k];
+    const zh = el.dataset.i18nPhZh || el.placeholder;
+    el.placeholder = DICT[lang][k] || zh;
   }
   for (const el of $$("[data-lang-set]")){
     el.classList.toggle("on", el.dataset.langSet === lang);
@@ -1571,10 +1626,139 @@ $("#btnTaskDispatch").addEventListener("click", async () => {
     await api("/api/tasks", {method:"POST", body: JSON.stringify({agentKind: kind, cwd, prompt})});
     toast(t("任务已入队"));
     $("#task-prompt").value = "";
+    // 记住本次工作目录并刷新最近下拉（失败不阻塞派发）。
+    try {
+      await api("/api/fs/recent", {method:"POST", body: JSON.stringify({path: cwd})});
+      await refreshRecentCWD();
+      $("#cwd-recent-select").value = cwd;
+    } catch(e){}
     refreshTasks();
   } catch(e){ toast(String(e.message||e)); }
   finally { btn.disabled = false; }
 });
+
+/* ---------- 工作目录：PC 原生选取框 + Web <input webkitdirectory> 降级 ---------- */
+$("#cwd-recent-select").addEventListener("change", () => {
+  const v = $("#cwd-recent-select").value;
+  if (v) $("#task-cwd").value = v;
+});
+$("#btnPickCwd").addEventListener("click", async () => {
+  try {
+    let picked = null;
+    if (window.tarmac && window.tarmac.pickDirectory){
+      picked = await window.tarmac.pickDirectory();
+    } else {
+      // Web 降级：浏览器拿不到绝对文件系统路径，改用服务端只读目录浏览器
+      // （/api/fs/roots + /api/fs/list）选取真实绝对路径。
+      picked = await openFSBrowser();
+    }
+    if (picked){
+      $("#task-cwd").value = picked;
+      try {
+        await api("/api/fs/recent", {method:"POST", body: JSON.stringify({path: picked})});
+        await refreshRecentCWD();
+      } catch(e){ /* 记忆失败不阻塞派发 */ }
+    }
+  } catch(e){ toast(String(e.message||e)); }
+});
+
+/* 重新拉取最近路径，填充 datalist + 显式下拉 */
+async function refreshRecentCWD(){
+  const rr = await api("/api/fs/recent");
+  const list = rr.recent || [];
+  const dl = $("#cwd-recent"), sel = $("#cwd-recent-select");
+  dl.innerHTML = "";
+  sel.innerHTML = '<option value="" data-i18n="tasks.recent">最近路径…</option>';
+  for (const p of list){
+    const o = document.createElement("option"); o.value = p; dl.appendChild(o);
+    const so = document.createElement("option"); so.value = p; so.textContent = p; sel.appendChild(so);
+  }
+  localize();
+}
+
+/* ---------- Web 降级目录浏览器（服务端只读，返回真实绝对路径） ---------- */
+let fsCurrent = "";
+let fsParent = "";
+let fsResolver = null;
+
+function fsFinish(value){
+  const resolve = fsResolver;
+  fsResolver = null;
+  $("#fsModal").classList.add("hidden");
+  if (resolve) resolve(value);
+}
+
+async function fsBrowse(path){
+  try {
+    const j = await api("/api/fs/list?path=" + encodeURIComponent(path));
+    fsCurrent = j.path || path;
+    fsParent = j.parent || "";
+    $("#fsPath").textContent = fsCurrent;
+    $("#fsUp").disabled = !fsParent;
+    const box = $("#fsList");
+    box.innerHTML = "";
+    const entries = j.entries || [];
+    if (!entries.length){
+      const d = document.createElement("div");
+      d.className = "mono";
+      d.style.padding = "10px";
+      d.textContent = (lang === "zh-CN") ? "(无子目录)" : (t("fs.empty") || "(no subfolders)");
+      box.appendChild(d);
+      return;
+    }
+    for (const e of entries){
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn";
+      b.style.cssText = "display:block;width:100%;text-align:left;margin:3px 0;border-radius:0;border-left:0;border-right:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+      b.textContent = "📁 " + e.name;
+      b.title = e.path;
+      b.addEventListener("click", () => fsBrowse(e.path));
+      box.appendChild(b);
+    }
+  } catch(e){ toast(String(e.message||e)); }
+}
+
+async function openFSBrowser(){
+  return new Promise(async resolve => {
+    fsResolver = resolve;
+    const modal = $("#fsModal");
+    modal.classList.remove("hidden");
+    localize();
+    // 盘符快捷入口
+    try {
+      const r = await api("/api/fs/roots");
+      const roots = r.roots || [];
+      const box = $("#fsRoots");
+      box.innerHTML = "";
+      for (const root of roots){
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn";
+        b.style.cssText = "padding:4px 10px;font-size:12px";
+        b.textContent = root;
+        b.addEventListener("click", () => fsBrowse(root));
+        box.appendChild(b);
+      }
+    } catch(e){ /* 非致命 */ }
+    const start = ($("#task-cwd").value || "").trim();
+    if (start) await fsBrowse(start);
+    else {
+      try {
+        const r = await api("/api/fs/roots");
+        const first = (r.roots || [])[0];
+        if (first) await fsBrowse(first);
+        else { fsCurrent = ""; $("#fsPath").textContent = ""; $("#fsList").innerHTML = ""; }
+      } catch(e){}
+    }
+  });
+}
+
+$("#fsUp").addEventListener("click", () => { if (fsParent) fsBrowse(fsParent); });
+$("#fsChoose").addEventListener("click", () => fsFinish(fsCurrent || null));
+$("#fsCancel").addEventListener("click", () => fsFinish(null));
+$("#fsClose").addEventListener("click", () => fsFinish(null));
+$("#fsModal").addEventListener("click", e => { if (e.target === $("#fsModal")) fsFinish(null); });
 $("#btnTasksRefresh").addEventListener("click", refreshTasks);
 $("#btnQueuePause").addEventListener("click", async () => {
   try { await api("/api/tasks/queue/pause", {method:"POST"}); S.tasksPaused = true; renderTasks(); } catch(e){ toast(String(e.message||e)); }
@@ -1602,6 +1786,10 @@ $("#btnContinueSend").addEventListener("click", sendContinue);
 document.addEventListener("keydown", e => {
   if (e.target.matches("textarea,input")) {
     if (e.key === "Escape") e.target.blur();
+    return;
+  }
+  if (!$("#fsModal").classList.contains("hidden")){
+    if (e.key === "Escape") fsFinish(null);
     return;
   }
   if (!$("#denyModal").classList.contains("hidden")){
@@ -1682,10 +1870,23 @@ async function initialLoad(){
     } catch(err){}
     if (S.pending.size && !S.selected) S.selected = [...S.pending.keys()][0];
   } catch(e){ toast(String(e.message||e)); }
+
+  /* ---------- 最近工作目录记忆 ---------- */
+  try {
+    await refreshRecentCWD();
+    const first = $("#cwd-recent-select option:not([value=''])");
+    if (first) $("#task-cwd").value = first.value;
+  } catch(e){ /* 非致命：忽略，用户仍可手动/原生选取 */ }
+
   localize(); renderAll(); connect();
   loadNotifyStatus(); // fire-and-forget; must never break the first paint
 
   /* ---------- terminal (xterm.js + ConPTY + WS) ---------- */
+  // xterm.js 由 CDN 加载；本机 SSL 被拒时不能让整个初始化中断。
+  if (typeof Terminal === "undefined"){
+    const st = document.getElementById('termStatus');
+    if (st){ st.textContent = "xterm.js 未加载（CDN 不可达）"; st.style.color = "var(--red)"; }
+  } else {
   const term = new Terminal({cursorBlink:true,fontSize:13,fontFamily:'var(--mono)',theme:{background:'#000000'}});
   let termWs = null, termSessionId = null, termAttach = null;
   const termContainer = document.getElementById('termContainer');
@@ -1725,6 +1926,7 @@ async function initialLoad(){
 
   document.getElementById('btnTermClear').addEventListener('click', () => term.clear());
   document.getElementById('btnTermFocus').addEventListener('click', () => term.focus());
+  } // end typeof Terminal guard
 
 }
 initialLoad();

@@ -17,8 +17,8 @@ docs/
 ├── roadmap.md          # 里程碑路线图（M1 / M1.5 / M2 / M3）
 ├── contributing.md     # 贡献指南（分支策略、提交规范、CI 触发）
 ├── code-of-conduct.md  # 社区行为准则
-├── license.md          # 许可说明（Open Core：核心 MIT，商业插件/企业版另行授权）
-└── trademark.md        # 商标检索记录（M3 决策 H 附件）
+├── license.md          # 许可说明（MIT，含第三方 vendored 依赖）
+└── trademark.md        # 商标检索记录（M3 附件）
 ```
 
 ## 设计原则

@@ -176,7 +176,7 @@
 | E | 登录鉴权 + 多用户 + 远程开关 | 单 token 鉴权已实现；多用户/远程开关未做（默认仅 127.0.0.1） |
 | F | 桌面通知 + 飞书 webhook + 自动更新 | 浏览器通知 + 飞书已实现；自动更新未做 |
 | G | SQLite 90 天保留 + 导出 | **已实现**（清扫 job + 会话导出） |
-| H | Open Core + 商业插件 | M3 |
+| H | ~~Open Core + 商业插件~~ → **纯 MIT** | **已变更**：用户 m15238「M3先不管，按照MIT做」→ 决策 H 废止，全仓库统一 MIT（2026-11-09 落地）；见 LICENSE / docs/license.md / THIRD_PARTY_NOTICES.md |
 
 ---
 
@@ -208,7 +208,7 @@ API 速查：`GET /healthz`（免鉴权）；`POST /acp/frame`；`POST /api/agen
 3. **真实 Claude Code 联调**：本机安装 `@zed-industries/claude-code-acp` 后走连接器实机验证（连接器已按其协议实现：session/new 分配 id、prompt 生命周期、request_permission 映射、fs/* 能力缺失报错——如需读写文件回调，需在连接器实现 fs/read_file、fs/write_file）。
 4. **Codex 真实接入**：Codex CLI 非 ACP 协议，需 codex 专用桥接器（Hub 侧适配器已就绪）。
 5. **UI 复测**：换常规浏览器完成武装态保持复测 + 审计/事件流 tab 手动验证。
-6. **M3**：审计导出/归档增强 + Open Core 许可 + 商业插件框架。
+6. **M3**：审计导出/归档增强 + 文档站 / CI / Releases。~~Open Core 许可 + 商业插件框架~~ 已取消（决策 H 废止，改为纯 MIT，见上表 H 行）。
 
 ---
 

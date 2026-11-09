@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢你对 AgentHub 的兴趣！AgentHub 是 Open Core 项目（核心 MIT 许可，商业插件 / 企业版另行授权）。
+感谢你对 AgentHub 的兴趣！AgentHub 是 **MIT 许可**项目（全仓库统一，见根目录 [LICENSE](../LICENSE) 与 [license.md](license.md)）。
 
 ## 分支策略
 

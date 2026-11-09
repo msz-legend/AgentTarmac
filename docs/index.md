@@ -55,4 +55,4 @@ npm run dist   # 打包 NSIS 安装包（Win 32/64）
 
 ## 许可
 
-Open Core（决策 H）：核心以 MIT 许可发布；商业插件 / 企业版另行授权。
+MIT 许可，全仓库统一，见 [license.md](license.md) 与根目录 [LICENSE](../LICENSE)。

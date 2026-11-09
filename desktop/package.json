@@ -2,6 +2,7 @@
   "name": "agenttarmac-desktop",
   "productName": "AgentTarmac",
   "version": "0.2.0",
+  "license": "MIT",
   "description": "AgentTarmac 桌面客户端（决策 D）：Electron 壳，托管本地 daemon 与统一任务看板",
   "main": "main.js",
   "private": true,
@@ -19,7 +20,7 @@
     "appId": "com.agenttarmac.desktop",
     "productName": "AgentTarmac",
     "artifactName": "AgentTarmac-Setup-${version}.${ext}",
-    "files": ["main.js", "package.json"],
+    "files": ["main.js", "preload.js", "package.json"],
     "extraResources": [
       {
         "from": "../bin/agenthubd.exe",

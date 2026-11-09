@@ -133,4 +133,4 @@ go build ./... && go vet ./... && go test ./...
 
 ## 许可
 
-Open Core（决策 H）：核心以 MIT 许可发布（见 [LICENSE](LICENSE)）；商业插件/企业版另行授权。
+MIT 许可，见 [LICENSE](LICENSE)。全仓库（daemon / 适配器 / connector / PTY / Web 控制台 / 桌面壳 / 文档）均为 MIT，无商业插件或企业版分层。第三方 vendored 代码的版权声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；许可说明与商标边界见 [docs/license.md](docs/license.md)。

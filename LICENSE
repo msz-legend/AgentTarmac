@@ -22,6 +22,10 @@ SOFTWARE.
 
 ---
 
-Open Core notice (decision H): this license covers the AgentHub core
-(daemon, adapters, connector, web console). Commercial plugins and the
-enterprise edition are licensed separately.
+The whole of this repository (daemon, adapters, connectors, PTY, Web
+console, desktop shell, docs) is released under the MIT License above.
+There is no separately licensed enterprise edition or commercial plugin
+tier.
+
+Third-party code vendored into this repository is listed with its own
+copyright notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

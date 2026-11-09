@@ -258,6 +258,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notify/test", s.auth(s.handleNotifyTest))
 	mux.HandleFunc("POST /api/push/subscribe", s.auth(s.handlePushSubscribe))
 	mux.HandleFunc("GET /sw.js", s.handleSW)
+	// Locally vendored terminal assets: no CDN dependency, so the console
+	// renders (including the embedded terminal) offline and on mobile.
+	mux.HandleFunc("GET /vendor/{name}", s.handleVendor)
 
 	// File-system browser for task dispatch working-directory selection
 	// (PC + Web). Read-only browse + persistent recent-directory memory.

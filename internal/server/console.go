@@ -370,6 +370,31 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// handleVendor serves the small, fixed allowlist of locally vendored terminal
+// assets. A literal allowlist (not a joined path) keeps path traversal out.
+func (s *Server) handleVendor(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var contentType string
+	switch name {
+	case "xterm.js", "addon-fit.js":
+		contentType = "text/javascript; charset=utf-8"
+	case "xterm.css":
+		contentType = "text/css; charset=utf-8"
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	raw, err := fs.ReadFile(webFS, "web/vendor/"+name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
 // handleSW serves the Service Worker (same-origin requirement for push).
 func (s *Server) handleSW(w http.ResponseWriter, r *http.Request) {
 	raw, err := fs.ReadFile(webFS, "web/sw.js")

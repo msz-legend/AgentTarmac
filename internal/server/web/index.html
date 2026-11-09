@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>AgentHub · 放行台</title>
 <script>window.__TARMAC_BOOT__=/*__BOOT__*/null;</script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.5.0/css/xterm.css">
-<script src="https://cdn.jsdelivr.net/npm/xterm@5.5.0/lib/xterm.js"></script>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23e0a458'/%3E%3Ctext x='16' y='23' font-size='21' font-family='sans-serif' font-weight='700' text-anchor='middle' fill='%231c1714'%3EA%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/vendor/xterm.css">
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
 <style>
 :root{
   --bg:#1c1714; --surface:#262019; --surface2:#2f2820; --line:#3d342a;
@@ -229,6 +231,11 @@ h1{font-size:19px;font-weight:650;letter-spacing:-.025em;margin:0 0 4px}
   background:#171310;border:1px solid var(--line);border-radius:8px;
   color:var(--ink);font:inherit;font-size:13px;padding:9px 10px;
 }
+.cwd-picker{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cwd-picker>*{min-width:0}
+.cwd-picker #task-cwd{flex:1 1 200px}
+.cwd-picker #cwd-recent-select{flex:0 1 180px;max-width:180px}
+#task-webcwd{display:none}
 textarea{
   width:100%;min-height:88px;background:#171310;border:1px solid var(--line);
   border-radius:8px;color:var(--ink);font:inherit;font-size:13px;padding:10px;
@@ -257,12 +264,18 @@ textarea:focus{outline:none;border-color:var(--amber-dim)}
   .shell{grid-template-columns:1fr}
   .rail{
     position:fixed;left:0;right:0;bottom:0;height:56px;z-index:40;
-    flex-direction:row;justify-content:space-around;padding:0;gap:0;
+    flex-direction:row;justify-content:flex-start;padding:0 4px;gap:0;
     border-right:0;border-top:1px solid var(--line);
+    overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
   }
-  .navbtn{width:auto;min-width:56px;height:50px;flex:1}
+  .rail::-webkit-scrollbar{display:none}
+  .navbtn{width:auto;min-width:56px;height:50px;flex:1 0 56px}
   .rail-spacer{display:none}
   .workspace{padding-bottom:66px}
+  .cwd-picker #task-cwd{flex:1 1 100%}
+  .cwd-picker #cwd-recent-select{flex:1 1 auto;max-width:none}
+  .cwd-picker #btnPickCwd{flex:0 0 auto;min-height:40px}
   .top-stats .stat:not(.waiting){display:none}
   .view{padding:16px 16px 40px}
   .brand-name{max-width:calc(100vw - 150px)}
@@ -434,11 +447,11 @@ textarea:focus{outline:none;border-color:var(--amber-dim)}
                 <option value="claude_code">Claude Code</option>
                 <option value="codex">Codex</option>
               </select>
-              <div class="cwd-picker" style="display:flex;align-items:center;gap:8px">
-                <input id="task-cwd" type="text" list="cwd-recent" placeholder="工作目录 D:\work\proj" data-no-i18n style="flex:1" autocomplete="off">
-                <select id="cwd-recent-select" title="最近路径" style="max-width:180px"><option value="" data-i18n="tasks.recent">最近路径…</option></select>
+              <div class="cwd-picker">
+                <input id="task-cwd" type="text" list="cwd-recent" placeholder="工作目录 D:\work\proj" data-no-i18n autocomplete="off">
+                <select id="cwd-recent-select" title="最近路径"><option value="" data-i18n="tasks.recent">最近路径…</option></select>
                 <button id="btnPickCwd" type="button" data-i18n="tasks.pickDir">选择目录…</button>
-                <input id="task-webcwd" type="file" webkitdirectory style="display:none" data-no-i18n>
+                <input id="task-webcwd" type="file" webkitdirectory data-no-i18n>
               </div>
               <datalist id="cwd-recent"></datalist>
               <textarea id="task-prompt" rows="3" placeholder="任务描述…" data-i18n-ph="tasks.promptPh"></textarea>
@@ -1881,26 +1894,42 @@ async function initialLoad(){
   localize(); renderAll(); connect();
   loadNotifyStatus(); // fire-and-forget; must never break the first paint
 
-  /* ---------- terminal (xterm.js + ConPTY + WS) ---------- */
-  // xterm.js 由 CDN 加载；本机 SSL 被拒时不能让整个初始化中断。
-  if (typeof Terminal === "undefined"){
-    const st = document.getElementById('termStatus');
-    if (st){ st.textContent = "xterm.js 未加载（CDN 不可达）"; st.style.color = "var(--red)"; }
-  } else {
-  const term = new Terminal({cursorBlink:true,fontSize:13,fontFamily:'var(--mono)',theme:{background:'#000000'}});
-  let termWs = null, termSessionId = null, termAttach = null;
+  /* ---------- terminal (local xterm.js + FitAddon + ConPTY + WS) ---------- */
+  // xterm.js 5.5 + addon-fit are served locally from /vendor (no CDN, works
+  // offline and on mobile). Manual WS binding: onData -> WS.send, onmessage ->
+  // term.write. xterm 2.x helpers (term.fit / term.attach) no longer exist.
+  let term = null, fitAddon = null, termWs = null, termSessionId = null, termAttach = false;
   const termContainer = document.getElementById('termContainer');
-  const termBar = document.getElementById('termBar');
   const termStatus = document.getElementById('termStatus');
   const termSessionEl = document.getElementById('termSession');
-  term.open(termContainer);
-  term.fit();
-  window.addEventListener('resize', () => term.fit());
-  term.onData(d => {
-    if (termWs && termWs.readyState === WebSocket.OPEN) termWs.send(d);
-  });
+
+  if (typeof Terminal === "undefined"){
+    if (termStatus){ termStatus.textContent = "xterm.js 未加载（本地资源缺失）"; termStatus.style.color = "var(--red)"; }
+  } else {
+    term = new Terminal({cursorBlink:true,fontSize:13,fontFamily:'var(--mono)',theme:{background:'#000000'},allowTransparency:false});
+    if (typeof FitAddon !== "undefined" && FitAddon.FitAddon){
+      fitAddon = new FitAddon.FitAddon();
+      term.loadAddon(fitAddon);
+    }
+    term.open(termContainer);
+    const fitTerm = () => {
+      if (fitAddon){ try { fitAddon.fit(); } catch (_) {} }
+      else { try { term.resize(80, 24); } catch (_) {} }
+    };
+    fitTerm();
+    window.addEventListener('resize', fitTerm);
+    term.onData(d => {
+      if (termWs && termWs.readyState === WebSocket.OPEN){
+        termWs.send(new TextEncoder().encode(d));
+      }
+    });
+  }
 
   function openTerminal(sessionId){
+    if (!term){
+      toast(t("终端组件未加载"));
+      return;
+    }
     if (termWs && termWs.readyState === WebSocket.OPEN) termWs.close();
     termSessionId = sessionId;
     termSessionEl.textContent = sessionId;
@@ -1908,11 +1937,12 @@ async function initialLoad(){
     termStatus.style.color = "var(--green)";
     term.clear();
     setView("terminal");
-    const wsUrl = (BOOT.addr || ("ws://" + location.host + "/ws")).replace(/^http/,"ws") +
-      "/api/sessions/" + encodeURIComponent(sessionId) + "/terminal-ws?token=" + encodeURIComponent(TOKEN);
+    if (fitAddon){ try { fitAddon.fit(); } catch (_) {} }
+    const base = (BOOT.addr || ("ws://" + location.host + "/ws")).replace(/^http/,"ws").replace(/\/ws$/,"");
+    const wsUrl = base + "/api/sessions/" + encodeURIComponent(sessionId) + "/terminal-ws?token=" + encodeURIComponent(TOKEN);
     termWs = new WebSocket(wsUrl);
     termWs.binaryType = "arraybuffer";
-    termWs.onopen = () => { term.attach(term); termAttach = true; };
+    termWs.onopen = () => { termAttach = true; termStatus.textContent = t("已连接"); termStatus.style.color = "var(--green)"; term.focus(); };
     termWs.onmessage = ev => {
       let data;
       if (ev.data instanceof ArrayBuffer) data = new Uint8Array(ev.data);
@@ -1924,9 +1954,8 @@ async function initialLoad(){
     termWs.onclose = () => { termAttach = false; termWs = null; termStatus.textContent = t("已断开"); termStatus.style.color = "var(--muted)"; };
   }
 
-  document.getElementById('btnTermClear').addEventListener('click', () => term.clear());
-  document.getElementById('btnTermFocus').addEventListener('click', () => term.focus());
-  } // end typeof Terminal guard
+  document.getElementById('btnTermClear').addEventListener('click', () => { if (term) term.clear(); });
+  document.getElementById('btnTermFocus').addEventListener('click', () => { if (term) term.focus(); });
 
 }
 initialLoad();

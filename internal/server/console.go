@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -368,6 +369,16 @@ func (s *Server) handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	s.push.Subscribe(sub)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleFavicon serves the same mark as the inline data-URI in index.html, so
+// WebViews that still probe /favicon.ico do not produce a 404.
+func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#e0a458"/><text x="16" y="23" font-size="21" font-family="sans-serif" font-weight="700" text-anchor="middle" fill="#1c1714">A</text></svg>`
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, svg)
 }
 
 // handleVendor serves the small, fixed allowlist of locally vendored terminal

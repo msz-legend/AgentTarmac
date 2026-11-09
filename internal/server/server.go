@@ -261,6 +261,9 @@ func (s *Server) Handler() http.Handler {
 	// Locally vendored terminal assets: no CDN dependency, so the console
 	// renders (including the embedded terminal) offline and on mobile.
 	mux.HandleFunc("GET /vendor/{name}", s.handleVendor)
+	// Some browsers/WebViews still probe /favicon.ico despite the inline data
+	// URI in index.html. Serve the same mark so no 404 shows up in the log.
+	mux.HandleFunc("GET /favicon.ico", s.handleFavicon)
 
 	// File-system browser for task dispatch working-directory selection
 	// (PC + Web). Read-only browse + persistent recent-directory memory.

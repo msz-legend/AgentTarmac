@@ -612,6 +612,8 @@ textarea:focus{outline:none;border-color:var(--amber-dim)}
     </div>
     <div class="modal-body">
       <div class="mono" id="fsPath" data-no-i18n style="margin-bottom:8px;word-break:break-all"></div>
+      <input id="fsJump" data-no-i18n placeholder="输入路径直接跳转，如 D:/work/proj（Enter 确认）"
+             style="width:100%;margin-bottom:8px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-family:var(--mono);font-size:12.5px" />
       <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap" id="fsRoots"></div>
       <div id="fsList" data-no-i18n style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:6px"></div>
     </div>
@@ -727,6 +729,9 @@ const ROWS = [
 ["关闭所有 Hub 标签页后仍可收到高危审批与失败提醒","High-risk approvals and failures reach you even with every Hub tab closed","Hub のタブを全て閉じても高リスク承認と失敗が届きます"],
 ["分叉继续","Fork & continue","フォークして継続"],
 ["在系统终端打开","Open in system terminal","システムターミナルで開く"],
+    ["托管会话不可直接 resume","Managed session cannot resume directly","管理セッションは直接再開できません"],
+    ["托管会话无法直接 resume（Hub 合成 ID，agent 不认识）；可用「继续此会话」重新派发","Managed sessions cannot resume directly (the Hub-synthesized ID means nothing to the agent); use Continue to re-dispatch","管理セッションは直接再開できません（Hub 生成 ID は agent が認識しません）。「続行」で再ディスパッチしてください"],
+    ["终端连接失败","Terminal connection failed","ターミナル接続に失敗しました"],
 ["查看会话","View session","セッションを表示"],
 ["疑似失联","stale (no heartbeat)","応答なし（疑い）"],
 ["会话详情","Session details","セッション詳細"],
@@ -751,6 +756,20 @@ const ROWS = [
 const KV = {
   en:{
     "nav.board":"Board","nav.desk":"Desk","nav.sessions":"Sessions","nav.tasks":"Tasks","nav.stream":"Stream","nav.rules":"Rules","nav.settings":"Settings","nav.terminal":"Terminal","brand.sub":"· Clearance",
+    "board.title":"Board overview","desk.title":"Clearance desk","sessions.title":"Sessions","stream.title":"Event stream","rules.title":"Allow rules","settings.title":"Settings",
+    "panel.agents":"Agent roster","panel.pending":"Pending approvals","panel.recent":"Recent events","cont.title":"Continue this session",
+    "board.sub":"Every agent on this machine — state, pending approvals and recent events on one screen.",
+    "deny.cancel":"Cancel","deny.confirm":"Confirm rejection","deny.placeholder":"Reason (audit note)","deny.title":"Reject this request","deny.warn":"The tool call will not run after rejection. Your note goes into the audit trail.",
+    "desk.sub":"Every permission request on this machine lands here. Keys 1-4 decide, no mouse needed.",
+    "empty.none":"No data yet",
+    "roster.active":"Active only","roster.all":"All",
+    "rules.sub":"Allow-in-session and Always-allow verdicts become rules that auto-allow matching requests; high-risk operations are never auto-allowed.",
+    "sessions.sub":"Each agent may run many sessions. Cards carry tool-call and approval trails; Continue reaches the agent over the Hub bus.",
+    "set.daemon":"Daemon address","set.daemonDesc":"API and WebSocket share the same token","set.lang":"UI language","set.langDesc":"Defaults to the browser language","set.token":"Access token","set.tokenDesc":"Injected into this page by the daemon; do not share","set.version":"Version",
+    "settings.sub":"Connection details and UI preferences for the local daemon.",
+    "sl.connecting":"connecting…","stat.agents":"Agents","stat.daemon":"daemon","stat.pending":"Pending","stat.sessions":"Sessions",
+    "stream.sub":"All agent events in time order; replayable within the daemon lifetime, durable audit in SQLite.",
+    "tile.agents":"Agents online","tile.events":"Events","tile.eventsN":"incl. history","tile.pending":"Pending","tile.pendingN":"awaiting your call","tile.sessions":"Active sessions",
     "tasks.title":"Tasks","tasks.sub":"Fully-managed dispatch: pick an agent → send the task → watch it run → approve → done, without leaving the Hub (D13).",
     "tasks.pause":"Pause dispatch","tasks.resume":"Resume dispatch","tasks.dispatch":"Dispatch a task","tasks.promptPh":"Describe the task…","tasks.send":"Dispatch →","tasks.pickDir":"Pick folder…","tasks.recent":"Recent…","tasks.ledger":"Task ledger",
     "fs.title":"Choose working directory","fs.up":"Up","fs.choose":"Use this folder","fs.empty":"(no subfolders)",
@@ -776,6 +795,20 @@ const KV = {
   ja:{
     "nav.board":"ボード","nav.desk":"デスク","nav.sessions":"セッション","nav.tasks":"タスク","nav.stream":"履歴","nav.rules":"ルール","nav.settings":"設定","brand.sub":"· クリアランス",
     "tasks.title":"タスク","tasks.sub":"完全管理のディスパッチ：Agent を選び → タスクを送り → 実行を観察 → 承認 → 完了。Hub から出ません（D13）。",
+    "board.title":"全体ステータス","desk.title":"承認デスク","sessions.title":"セッション","stream.title":"イベントストリーム","rules.title":"承認ルール","settings.title":"設定",
+    "panel.agents":"Agent 一覧","panel.pending":"承認待ちリクエスト","panel.recent":"最近のイベント","cont.title":"このセッションを続行",
+    "board.sub":"このマシンの全 Agent の状態・承認待ち・最近のイベントを一枚で。",
+    "deny.cancel":"キャンセル","deny.confirm":"却下を確認","deny.placeholder":"理由（監査メモ）","deny.title":"このリクエストを却下","deny.warn":"却下するとツール呼び出しは実行されません。メモは監査記録に残ります。",
+    "desk.sub":"このマシンの全承認リクエストがここに集まります。キー 1-4 で判定、マウス不要。",
+    "empty.none":"データなし",
+    "roster.active":"稼働のみ","roster.all":"すべて",
+    "rules.sub":"セッション内許可・常に許可の判定はルールになり、以後の同一要求を自動許可します。高リスクは決して自動許可されません。",
+    "sessions.sub":"Agent ごとに複数セッションが並行できます。カードにはツール呼び出しと承認の履歴があります。「続行」は Hub バス経由で Agent へ届きます。",
+    "set.daemon":"daemon アドレス","set.daemonDesc":"API と WebSocket は同一トークン","set.lang":"UI 言語","set.langDesc":"既定はブラウザ言語","set.token":"アクセス トークン","set.tokenDesc":"daemon がこのページに注入。共有しないでください","set.version":"バージョン",
+    "settings.sub":"ローカル daemon の接続情報と UI 設定。",
+    "sl.connecting":"接続中…","stat.agents":"Agent","stat.daemon":"daemon","stat.pending":"承認待ち","stat.sessions":"セッション",
+    "stream.sub":"全 Agent のイベントを時系列で流します。daemon の生存中は遡れます。永続監査は SQLite。",
+    "tile.agents":"稼働 Agent","tile.events":"イベント数","tile.eventsN":"履歴込み","tile.pending":"承認待ち","tile.pendingN":"判定が必要","tile.sessions":"稼働セッション",
     "tasks.pause":"ディスパッチ停止","tasks.resume":"ディスパッチ再開","tasks.dispatch":"タスクをディスパッチ","tasks.promptPh":"タスクの説明…","tasks.send":"ディスパッチ →","tasks.pickDir":"フォルダーを選択…","tasks.recent":"最近…","tasks.ledger":"タスク台帳",
     "fs.title":"作業ディレクトリを選択","fs.up":"上位","fs.choose":"このフォルダーを使う","fs.empty":"(サブフォルダーなし)",
     "set.notifyDesktop":"デスクトップ通知",
@@ -1245,6 +1278,7 @@ function renderSessions(){
     // the explicit secondary action (PRD D14/Q-F5); the terminal button only
     // shows for kinds with a native interactive resume (PRD F8/D15).
     const canTerm = s.kind === "claude_code" || s.kind === "codex";
+    const managedTask = String(s.id||"").startsWith("task-"); // Hub-synthesized id, agent can't resume it
     const open = S.openSession === s.id;
     return `
     <div class="row" data-action="toggleSession" data-id="${esc(s.id)}" style="cursor:pointer">
@@ -1255,7 +1289,8 @@ function renderSessions(){
       ${sessionPill(s)}
       <button class="btn" data-action="sessionContinue" data-id="${esc(s.id)}">${esc(t("继续此会话"))}</button>
       <button class="btn" data-action="sessionFork" data-id="${esc(s.id)}" title="${esc(t("以当前会话为父创建新会话（默认不 fork，此为显式操作）"))}">${esc(t("分叉继续"))}</button>
-      ${canTerm ? `<button class="btn" data-action="sessionTerminal" data-id="${esc(s.id)}">${esc(t("在系统终端打开"))}</button>` : ""}
+      ${canTerm && !managedTask ? `<button class="btn" data-action="sessionTerminal" data-id="${esc(s.id)}">${esc(t("在系统终端打开"))}</button>`
+        : (canTerm ? `<span class="t2" title="${esc(t("托管会话无法直接 resume（Hub 合成 ID，agent 不认识）；可用「继续此会话」重新派发"))}">${esc(t("托管会话不可直接 resume"))}</span>` : "")}
     </div>
     ${open ? sessionDetailHTML(s) : ""}`;
   }).join("");
@@ -1713,6 +1748,8 @@ async function fsBrowse(path){
     fsCurrent = j.path || path;
     fsParent = j.parent || "";
     $("#fsPath").textContent = fsCurrent;
+    const jump = $("#fsJump");
+    if (jump && document.activeElement !== jump) jump.value = fsCurrent;
     $("#fsUp").disabled = !fsParent;
     const box = $("#fsList");
     box.innerHTML = "";
@@ -1774,6 +1811,12 @@ async function openFSBrowser(){
 }
 
 $("#fsUp").addEventListener("click", () => { if (fsParent) fsBrowse(fsParent); });
+// P2-7 (R3-F2): type a path, press Enter, jump straight there.
+$("#fsJump").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  const v = e.target.value.trim();
+  if (v) fsBrowse(v);
+});
 $("#fsChoose").addEventListener("click", () => fsFinish(fsCurrent || null));
 $("#fsCancel").addEventListener("click", () => fsFinish(null));
 $("#fsClose").addEventListener("click", () => fsFinish(null));
@@ -1957,7 +2000,12 @@ async function initialLoad(){
       term.write(new TextDecoder().decode(data));
     };
     termWs.onerror = () => { termStatus.textContent = t("已断开"); termStatus.style.color = "var(--red)"; };
-    termWs.onclose = () => { termAttach = false; termWs = null; termStatus.textContent = t("已断开"); termStatus.style.color = "var(--muted)"; };
+    termWs.onclose = () => {
+      const neverOpened = !termAttach;
+      termAttach = false; termWs = null;
+      termStatus.textContent = t("已断开"); termStatus.style.color = "var(--muted)";
+      if (neverOpened) toast(t("终端连接失败")); // e.g. server-side honest 409 (R3-F1)
+    };
   }
 
   document.getElementById('btnTermClear').addEventListener('click', () => { if (term) term.clear(); });

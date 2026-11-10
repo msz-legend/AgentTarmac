@@ -535,10 +535,14 @@ func (s *Store) DeleteApprovalMemory(ctx context.Context, id int64) error {
 
 // DeleteApprovalMemoryByKey removes the memory row matching a rule's key,
 // so removing an always-rule also revokes its memory twin (vibe-trial B12).
-func (s *Store) DeleteApprovalMemoryByKey(ctx context.Context, agentKind, tool, pattern string) error {
+// Memory rows are keyed by the SHORT risk pattern ("rm -rf") while rules
+// carry the full main argument ("rm -rf ./x"), so the match is prefix
+// semantics in both directions.
+func (s *Store) DeleteApprovalMemoryByKey(ctx context.Context, agentKind, tool, argPattern string) error {
 	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM approval_memory WHERE agent_kind = ? AND tool = ? AND command_pattern = ?`,
-		agentKind, tool, pattern)
+		`DELETE FROM approval_memory WHERE agent_kind = ? AND tool = ?
+		 AND (command_pattern = ? OR ? LIKE command_pattern || '%' OR command_pattern LIKE ? || '%')`,
+		agentKind, tool, argPattern, argPattern, argPattern)
 	return wrapErr("delete approval memory by key", err)
 }
 

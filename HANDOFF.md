@@ -1,233 +1,271 @@
 # AgentHub Handoff 文档
 
-> 生成时间：2026-11-07 15:00（Asia/Shanghai）；**2026-11-07 QA R2 更新**
-> 当前阶段：**PRD_v0.4 M1 + M1.5 + M2 主体全量交付**——M1.5（Service Worker 推送 + 静默期）、F7 原生恢复（CC --resume / Codex exec resume）、D6 Go 版 hub-hook、F6 统一操作面（任务队列+看板+全托管派发）、D8 自托管中继、企微 webhook
-> 编译状态：`go build ./...` / `go vet ./...` / `gofmt` 全净；`go test ./...` 全绿（7 个包 80+ 用例）；PRD M1 实机验收 19/19 + M2 批次实机验收 10/10 + **QA R2 电池 175 项 ×3 = 525 检查 0 FAIL**
+> 生成时间：2026-11-10 23:20（Asia/Shanghai）
+> 版本基线：`v0.2.0-m2`，git HEAD `a01bb01 docs(license): unify repository under MIT, retire Open Core decision H`
+> 项目根目录：`D:\DevTools\AgentHub`
+> Go 模块：`github.com/agenttarmac/agenttarmac`（go 1.26，本机 Go 1.27.0，Windows amd64，CGO_ENABLED=0）
+> 运行端口：`127.0.0.1:8799`（默认，可通过 `-addr` 覆盖）
+> 数据目录：`-data`（默认 `./data`，SQLite WAL + `token` 文件）
+> 编译状态：`go build ./...` / `go vet ./...` / `gofmt -l .` 全净；`go test ./...` 全绿（12 个包）
+> Go 包清单：`acpclient` / `connector` / `platform` / `pty` / `push` / `relay` / `rules` / `runner` / `server` / `tasks`
+> 许可：纯 MIT（决策 H 已废止 Open Core，见 `LICENSE` / `docs/license.md` / `THIRD_PARTY_NOTICES.md`）
 
 ---
 
-## -2. QA R2 首轮（2026-11-07 下午，测试方案落地 + Android 实机）
+## 1. 版本基线与环境
 
-依据 `docs/TEST_PLAN.md`（v1.0，~160 TC）建成 `qa/` 测试环境并执行 R1+R2+R4：
-
-- **环境**：四件套重建于 `bin/`；`qa/` 含假 ACP agent、claude/codex 托管 shim（argv 记账 + settings 拷贝）、mock webhook（18900）。旧残留 daemon（PID 14444）已清。防火墙规则「AgentHub QA 18799 (LAN only)」已加（UAC 提权，LocalSubnet only）。
-- **PC 全电池**（6 脚本，修复后双跑）：sec 95/95、envelope 14/14、queue 14/14、notify 16/16、perf 26/26（**审批 p95=24ms，PRD ≤1s**）、recovery 10/10 —— **175 项 ×2 = 350 检查 0 FAIL**；`go test ./...` 7 包全绿、gofmt 净。
-- **发现并修复三缺陷**：
-  - **ENV-1**（S3）：事件环缺 `agent.kind` 戳记 → bridge.SetStore 会话反查 + 显式 agentKind（adapter/bridge/tasks/connector 五处同步）。
-  - **ENV-2**（P1，手机实测发现）：审批卡/复验框只显示 pattern，违反 D18「强制完整命令」→ `wsToEvent` 改用帧内 `mainArg`（命令原文）。
-  - **ENV-3**（P2）：控制台待办只从内存环重建，重启前 pending（DB 存活）放行台不可见 → boot 从 `/api/permission-requests?outcome=pending` 合并。
-- **Android 实机**（华为 Android 10，无 GMS，USB adb；AP 隔离 → `adb reverse` USB 隧道）：控制台渲染/WS 实时/**TC-UI-010 手机高危审批全流程**（复验框完整命令→键入 note→确认拒绝→审计落库）/TC-UI-006 三语/F4 假活标记/F8 三入口 全部通过。**SW 推送按产品决策改道企微 webhook**（华为浏览器对 localhost 不给 isSecureContext 且无 Push 服务——前提不成立，详见 qa/README §Android）；GMS 设备可恢复 SW 能力。
-- 测试装置噪声：Windows 回环阵发 RST → 脚本退避重试；空列表序列化 null → 脚本防御。
-- **待人工项**：真实企微 webhook URL（接入后移动通知即达真群）；真实 claude CLI 未装（shim+单测已覆盖构造路径）。
-
-
----
-
-## -1. PRD 交付对照（2026-11-07，PRD_v0.4 @ E:\找工作\...\AgentHub\）
-
-| PRD 条目 | 状态 | 实现 |
-|------|------|------|
-| **F3 审批四选项**（D16） | ✅ | 放行一次/该 session 下放行/放行 Always/拒绝（复验框）；`allow_session/always → 规则表`，`reject_always → 审批记忆`；永久判决二次确认（决策B，强于 PRD） |
-| **F3 规则引擎 v1**（Q-F4，M1 即需） | ✅ | `internal/rules`：`<tool>(<arg_pattern>)` 字面 glob、最具体优先、session 作用域随会话失效；主参数=shell 命令/文件路径；决策派生 pattern=精确主参数（E: 参考实现同语义） |
-| **F3 hook 通道**（CC PreToolUse / Codex PermissionRequest） | ✅ | `POST /api/hook/intake`（阻塞判决，2min fail-closed 超时 unavailable/timeout）+ `hooks/hub-hook.mjs`、`hooks/codex-hook.mjs`（AGENTHUB_URL/TOKEN/TIMEOUT_MS，低危本地短路）；会话自动注册 `origin=attached` |
-| **F3 验收**（≤1s 全链路） | ✅ 实测 | policy 命中 <1s（本机毫秒级）；四选项端到端可审计（rule_scope/note 落 approval_history + permission_resolved 事件） |
-| **F4 状态告警** | ✅ | 7 态映射（UI 稿 §1.4）+ 假活检测（running/waiting >120s 无活动 → ⚠疑似失联，不擅自 kill）；失败→飞书推送 |
-| **F5 多端一致** | ✅（M1 部分） | 响应式（≥1180/760 断点）+ 局域网 `-addr`；公网中继 = M2（D8） |
-| **F7 多会话并行+复用**（D14） | ✅ | sessions 表 origin(`attached\|managed`)/parent_session_id/title（首条 prompt）；「继续此会话」经命令总线；「分叉继续」显式按钮 → `/api/sessions/{id}/fork`（Hub 级 lineage；CC `--resume`/Codex resume 与 E: 同步推迟 M2） |
-| **F8 会话视图+终端跳转**（D15） | ✅ | Hub 内只读会话详情（头部 kind/cwd/origin/tokens + 按 session 过滤事件流）；`PlatformProvider.OpenSessionTerminal`（Windows wt.exe→cmd start 回退，darwin osascript，linux 多终端回退）+ `POST /api/sessions/{id}/terminal`（仅 claude_code/codex 有原生 resume，ACP 系 409 提示 Hub 内查看）；放行条「查看会话」跳转入口 |
-| **F9 通知**（D17） | ✅（M1+M1.5 范围） | 桌面 Web Notification（手势授权、isSecureContext 门控、仅摘要）+ 飞书 webhook（daemon 侧、加签、**仅高危待放行**+**会话失败**立即推、24h tail_hash 去重）；企微 = M2 |
-| **§5.6 数据保留**（D9） | ✅ | **默认永久保留**（-retention-days 默认 0），可选滚动窗口；purge 留痕（system 通知行）；导出 JSON/**Markdown** |
-| **§6 事件模型 v0.2**（冻结） | ✅ | 信封 v=2/event_id(uuid)/ts RFC3339(ms UTC)/agent{kind,version,instance_id}/risk/rule_supported；status 携带 cwd/origin/parent（C5）；tool_result ok；task 事件（命令总线）；outcome 词表不变（allowed_once/rejected/cancelled/unavailable）+ rule_scope/decided_by(policy) |
-| **M2 项** | ⏳ 按 PRD 排队 | 自托管中继、F6 统一操作面（任务队列看板）、xterm.js 内嵌终端、企微 webhook、macOS 正式支持、CC `--resume`/Codex CLI resume |
-| **M3 项** | ⏳ | 文档站/发布流程/社区运营；商标检索（PRD §14.5 遗留） |
-
-## -0.5 M1.5 + M2 交付（2026-11-07 第二轮）
-
-| PRD 条目 | 状态 | 实现 |
-|------|------|------|
-| **M1.5 Service Worker 通知**（F9 验收：关标签页仍可达） | ✅ | `internal/push`（VAPID 密钥持久化 + 订阅注册表 + Web Push 投递 + 410 自动退订）+ `/sw.js`（push/notificationclick）+ `POST /api/push/subscribe` + 设置页推送行 + 启用通知即注册订阅；高危审批/会话失败触达 |
-| **M1.5 通知静默期** | ✅ | 30s 同类合并（D17：perm/failed 按 session 抑制），飞书/企微共用 |
-| **F7 原生恢复** | ✅ | `internal/runner`：`claude --resume <id> --print --output-format stream-json --verbose` / `codex exec resume <id> --json`，cwd 强制携带；stream-json/JSONL → tool_call/tool_result/status 帧；单飞保护 + fire-and-forget；`POST /api/sessions/{id}/continue` 统一 managed（命令总线）/attached（原生）两条路 |
-| **D6 Go 版 hub-hook** | ✅ | `cmd/hub-hook`：stdin JSON → intake → allow(exit 0)/deny(exit 2, fail-closed)；`install/uninstall [--codex]` 幂等合并 CC settings.json / Codex hooks.json（只动自己的条目）；argv 顺序兼容 |
-| **F6 统一操作面主体**（D13） | ✅ | `internal/tasks`：tasks 表（迁移 0005）+ 队列（并发可配 `-task-concurrency`）+ 托管 spawn（CC `-p --settings` 注入 hub-hook → **审批进同一收件箱**；Codex exec --json）+ 失败自动重试 + 手动 retry/cancel + **暂停/恢复派发**（暂停续跑）+ 重启孤儿任务标记失败；task 生命周期事件（queued/started/finished/failed/cancelled）进环与 WS |
-| **F6 看板 UI** | ✅ | 控制台「任务」视图：派发表单（Agent/工作目录/描述）+ 任务台账（状态丸/错误/会话跳转）+ 暂停/恢复 + 重试/取消；任务 WS 事件实时刷新 |
-| **D8 自托管中继** | ✅ | `cmd/agenthub-relay`（TLS，`-insecure` 仅开发）+ `internal/relay`：Hub **出站** WS 连接（无需公网 IP）、浏览器请求管道转发、**不落地**（零存储）、双向 token（relay token + Hub Bearer 透传）、指数退避重连；`agenthubd -relay wss://… -relay-hub-id …` 启用（默认关） |
-| **M2 企微 webhook** | ✅ | `internal/server/wecom.go`（企业微信群机器人 text 消息）+ `-wecom-webhook`；与飞书同策略（高危/失败、静默期、去重） |
-| **M2 xterm.js 内嵌终端** | ⛔ 环境阻塞 | ConPTY 依赖（conpty v0.1.4）已就位；**xterm.js 资产在本环境无法下载**（CDN SSL 连接被拒）——非设计缺口；F8 系统终端跳转已交付替代路径。有网环境补齐前端资源后即可接上（后端 PTY 端点待写） |
-| **M2 macOS 正式支持** | ⚠️ 代码就绪 | darwin platform provider（osascript 终端跳转）在库；真机验证无法在本 Windows 环境执行 |
-
-**M2 批次实机验收（2026-11-07，python 10 项脚本）**：sw.js 服务 / VAPID 密钥 / push 订阅注册 / 任务派发→重试→终态 / managed session 链接 / task 生命周期事件 / **暂停阻塞派发** / continue 端点契约 — **10/10 PASS**；中继 e2e（Go 测试：浏览器→中继→Hub→回，含 401 透传与离线 502）✓；任务队列 e2e（假 agent 全生命周期 + 暂停阻塞）✓。
-
-### Go 包清单（7 个）
-
-`acpclient` / `connector` / `relay` / `rules` / `runner` / `server` / `tasks`
-
----
-
-**PRD 实机验收（2026-11-07，python 19 项脚本）**：healthz / intake 阻塞判决 allowed_once·always / **policy auto-allow <1s** / 信封 v2 全字段 / command 原文 / hook deny+note 落审计 / fork lineage / title=首条 prompt / rules 列表 / **Markdown 导出** / retention 默认 0 / **真实 wt.exe 终端拉起** — **19/19 PASS**。浏览器复验：会话卡三按钮（继续/分叉/终端）+ 详情过滤事件流 + fork 行显示。
-
----
-
-## 0. UI 稿适配（2026-11-07，本轮）
-
-**依据**：`E:\找工作\毛世泽+后端开发工程师\04_技术学习\AgentHub\design\UI_UX_v0.1.md`（内容版本 v0.4，§11/§12 为实现口径；其「唯一实现依据」为同项目 `internal/web/index.html` 参考实现，已通过 70/70 CDP）。
-
-**落地方式**：以参考实现为蓝本 1:1 移植布局/视觉/交互，数据层适配本仓库 API。旧三件套（index.html/app.js/style.css）删除，现为**单文件** `internal/server/web/index.html`（~1300 行，零依赖零构建）。
-
-| 采纳项 | 实现 |
-|------|------|
-| 暖色终端色板（Q-U1） | `--bg:#1c1714 / --surface:#262019 / --amber:#e0a458 / --green:#8fb573 / --red:#d4736a / --blue / --violet` 全套 token |
-| 默认落地=全局态势大屏（Q-U2） | 4 tile（在线 Agent/活跃会话/待放行/事件总数）+ Agent roster（全部/仅活跃）+ 待放行请求 + 最近事件 |
-| 三栏结构 | 顶栏(品牌+daemon/Agent/待放行/会话 状态) + rail 62px 六导航(态势/放行台/会话/事件流/规则/设置，含琥珀徽标) + statusline（kinds · 待放行 N · 会话 M · 连接态 · 版本）；<760px rail 变底部 tab |
-| 放行台四选项 | `1 放行一次 / 2 该 session 下放行 / 3 放行 Always / 4 拒绝(复验)`，各带 decision 词汇说明；选中卡琥珀描边+左风险色条，其余 hairline |
-| 拒绝复验框（§1.5） | 只读命令块 + 非必填说明（写入审计 note）+ 取消/确认；打开不改队列 |
-| 二次确认（决策B × 四选项3） | 首次点击 → 服务端 `requiresConfirmation` → 按钮变紫「再次点击确认」(.arm)；二次 `confirm:true` 落决策 |
-| 会话视图（§2.1） | 卡=会话（kind·cwd·回合+状态丸+继续此会话）；继续走 `/api/agent-requests` 命令总线 |
-| 规则视图 | 审批记忆呈现为 `tool(pattern) · kind · allow/deny · always` + 删除（`/api/rules` 别名 → approval_memory） |
-| 键盘 | `1/2/3/4` 决策、`j/k` 选择、`Esc` 关浮层（输入框聚焦让位）；输入框内 Esc 仅 blur |
-| 通知（决策F） | 设置页三行（桌面通知/任务完成通知/飞书 webhook 掩码+发送测试）+ `tarmac.notifyDesktop/notifyTask` localStorage；浏览器通知仅摘要不含命令正文 |
-| 三语（§9） | ROWS 词典 + TreeWalker localize，中/EN/JA，`tarmac.lang` 持久化 + 浏览器语言优先；机器值不翻译 |
-| token 注入（§11.2） | `window.__TARMAC_BOOT__` 由 daemon serve 时注入（token/version/WS addr），操作员免粘贴 |
-| WS 重连 | 指数退避 500ms→8s；WS 消息在前端转换为规格事件形状（与事件环 1:1） |
-
-**配套后端**（本轮新增）：
-- 迁移 `0002_session_agent_kind`（sessions.agent_kind，适配器写入）→ 会话卡显示 Agent 类型
-- 事件环形缓冲（内存 500 条，规格事件形状：permission_request/permission_resolved/status/tool_call/tool_result/task/error）+ `GET /api/events`（放行台重载后从环重建待办）
-- `GET /api/agents`、`GET|DELETE /api/rules`（记忆别名）、`GET /api/notify/status`（feishu/feishu_tail/retention_days/version）、`POST /api/notify/test`（501 未配置）
-- `PermissionResolution.Note` 回填（permission_resolved 事件携带复验说明）
-
-**浏览器实测（IAB 1440×900，截图证据）**：态势大屏四 tile 真实数据 ✓；放行台四选项+风险徽标（high 红/medium 蓝）✓；按 4 → 复验框打开且队列不变 → 确认拒绝 → 队列 2→1 + `permission_resolved{outcome:rejected, rule_scope:none}` ✓；allowAlways 武装态 → 二次点击 → 记忆落库（confirm_count=2）→ **规则视图即时出现** `Bash(cargo build) allow·always` ✓；会话卡 ✓；设置页（token 掩码/90 days/版本/飞书未配置/桌面通知 Blocked 降级）✓；中→EN 全 chrome 翻译 ✓；BOOT 注入 ✓；WS 已连接 ✓。
-
-**与参考实现的有意差异**：`decide()` 成功且为 session/always 判决时**即时刷新规则视图**（参考实现需整页重载）；事件环为 daemon 生命周期内存态（规格允许：持久审计在 SQLite）。
-
----
-
-## 1. 当前开发路径（全路径）
-
-**项目根目录**：`D:\DevTools\AgentHub`
-
-**Go 模块**：`github.com/agenttarmac/agenttarmac`（go 1.26；本机 Go 1.27.0）
-
-| 模块 | 路径 | 职责 |
-|------|------|------|
-| **适配器** | `internal/acpclient/adapter.go` | `BaseAdapter` 通用底座（~990 行）：5 个 handle* + 入站 `session/request_permission` + 审批流水线 + 状态机 + 重启恢复 |
-| | `internal/acpclient/claudecode_adapter.go` / `codex_adapter.go` | 薄封装：`agent_kind=claude_code` / `codex`（决策A 首批双适配，记忆按 kind 隔离） |
-| | `internal/acpclient/store.go` `db_init.go` `migrate_init.sql` `risk.go` `approval.go` `types.go` | 数据层（7 张表）/ 迁移（幂等+embed）/ 风险分级 / 决策词汇 / 领域模型 |
-| **daemon** | `internal/server/server.go` | HTTP+WS：Bearer 鉴权、`/acp/frame`、`/api/*`（sessions/export/tool-calls/permission-requests/decision/approvals/approval-memory+DELETE/notifications/agent-requests）、内嵌 Web 控制台 |
-| | `internal/server/bridge.go` | ACP 桥：适配器注册表 + 帧分发 + WS 事件（frame.in/out、agent.request/response、permission.resolved）|
-| | `internal/server/feishu.go` | 飞书自定义机器人通知（加签、tail_hash 去重落库、Test/WebhookTail） |
-| | `internal/server/console.go` | 控制台端点：`/`（BOOT 注入）、`/api/events`、`/api/agents`、`/api/rules`、`/api/notify/status|test` |
-| | `internal/server/web/index.html` | **Web 控制台**（单文件，UI 稿 v0.4 布局，见 §0，go:embed） |
-| **连接器** | `internal/connector/connector.go` + `cmd/agenthub-connect/main.go` | stdio↔daemon 桥：spawn 真实 ACP agent；agent 通知→`/acp/frame`；agent 权限请求→Hub 门控→判决映射回 agent 选项 id；Hub 命令→agent stdin；prompt 响应→回合完成回填；`fs/*`、`terminal/*` 明确报错 |
-| **入口** | `cmd/agenthubd/main.go` | daemon：默认 8799；双适配器注册；`-retention-days`（默认 90，启动+每 24h 清扫）；`-feishu-webhook/-feishu-secret`（或 env）；token 三级来源 |
-
----
-
-## 2. M2 完成内容（2026-11-07）
-
-| 序号 | 内容 | 证据 |
-|------|------|------|
-| 1 | **BaseAdapter 提取**：Claude Code/Codex 共用同一审批门控、状态机、审批记忆（键含 agent_kind，互相隔离） | codex_adapter_test.go：kind 注册、apply_patch/shell 分类、记忆不跨 kind |
-| 2 | **入站 session/request_permission**：真实 ACP agent 主动请求权限 → 同一审批管线 → 结果带 Hub requestId + agent 选项回显 | codex_adapter_test.go TestInboundRequestPermission |
-| 3 | **stdio 连接器**：spawn 模式 + passthrough 模式；`Ready()` 就绪信号；unsupported 能力（fs/*、terminal/*）立即 JSON-RPC 报错不悬挂 | connector_test.go TestConnectorEndToEnd（进程内假 agent 全链路） |
-| 4 | **Hub→agent 请求总线**：`POST /api/agent-requests` → WS agent.request → 连接器转发 → `POST /api/agent-requests/{id}/response` → WS agent.response；连接器在 agent 建会话后自动向 Hub 注册；prompt 响应自动回填 `session/update isComplete`（失败则 failed） | 实机冒烟：node 假 agent 经 agenthub-connect 建会话/跑回合/完成 |
-| 5 | **Web 控制台**：5 tab 看板 + WS 实时刷新 + 审批 pill 计数 + 浏览器桌面通知 + 手动发帧调试表单 + 会话导出下载 | 浏览器实测（见 §3） |
-| 6 | **审批两步确认（UI+服务端对齐）**：第一次点击 `confirm:false` → 服务端 `requiresConfirmation` → 按钮武装**保持到再次点击**（修复了 WS 重渲染清除武装态、8s 自动解除与服务端无过期不对称两个缺陷）；永久允许后记忆 `confirmCount=2` | 修复于 app.js `bindApprovalCards`/`decide`；服务端语义由 adapter_test 覆盖 |
-| 7 | **飞书通知**（决策F）：`session/request_permission` 帧触发；HMAC 加签；tail_hash 24h 去重（API 层与落库层双保险）；notifications 表审计 | feishu_test（httptest webhook 收包验证）+ TestNotifierHookOnPermissionFrame |
-| 8 | **保留期+导出**（决策G）：`-retention-days 90` 启动+每日清扫（FK 级联删 tool_calls/permission_requests/notifications，approval_memory 全局保留）；`GET /api/sessions/{id}/export` JSON 档案（session+toolCalls+permissionRequests+approvals） | db_extra_test（purge 级联/导出 bundle/记忆撤销/通知去重） |
-| 9 | 记忆撤销：`DELETE /api/approval-memory/{id}` + 记忆页撤销按钮（confirm 弹窗） | m2_test.go TestMemoryRevokeEndpoint |
-
-### 实机冒烟（2026-11-07，端口 18799）
-
-**开箱链路**：`agenthubd` 启动（迁移+双适配器注册+保留期策略+控制台服务）→ `agenthub-connect -token … node /tmp/fake-agent.mjs`（spawn 模式）→ Hub `POST /api/agent-requests {session/new}` → 假 agent 建会话 → 连接器自动注册 Hub（/api/sessions 可见）→ `{session/prompt}` → agent 发 `session/request_permission`（cargo build，medium）→ Hub API `allow_once` 判决 → **agent 收到 `{outcome:selected, optionId:proceed_once}`（选项映射正确）** → 回合完成、会话 `completed`/turns=1、工具调用留痕 → `GET /api/sessions/{id}/export` 下载档案。
-
----
-
-## 3. Web 控制台浏览器验证（2026-11-07，IAB 实测）
-
-**通过（截图证据）**：
-1. 控制台加载、深色主题渲染质量良好（顶栏/五 tab/表格/发帧表单）
-2. Token 保存 → WS 绿点"已连接" + toast
-3. 会话列表实时显示（状态徽章 awaiting_approval/completed、回合、tokens）
-4. 会话详情：工具调用时间线（shell/approved/medium）+ 权限请求记录 + 导出按钮
-5. 审批空态 ✓；API 触发请求后 **WS 实时推卡片**（不点刷新）+ tab pill 计数
-6. "仅本次允许" → toast「已允许：pr_…」+ 卡片消失（瞬态 toast 已截图捕捉）
-7. 永久允许两步确认 → 审批记忆页出现 allow / confirmCount=2 / 撤销按钮
-8. 事件流 WS 事件（hello 等）；新版 app.js（含修复）已确认由二进制 serve
-
-**受阻项（IAB 运行时输入通道故障，非页面缺陷）**：修复后的两步确认武装态点击复测、审计/事件流 tab 的手动交互、手动发帧表单点击。前期十余次点击成功证明页面 handler 正常；故障表现为 playwright/cua/dom_cua/键盘全部失效而只读正常（无对话框、有焦点、无遮挡、无循环重载）。**服务端两步确认语义已由 Go 测试覆盖**（TestAdapterPermanentVerdicts 等）；待后续换环境（或人工打开 http://127.0.0.1:8799/）复测武装态保持。
-
-**测试中发现并修复的缺陷**：
-- WS 重渲染清除永久判决武装态（`bindApprovalCards` 按 armed 状态恢复）
-- UI 8s 自动解除与服务端 AwaitingConfirm 无过期不对称（移除自动解除，武装保持到点击）
-- 重放 tool_call 缺 requestId（M1.5 后补）
-- notifications 外键约束（测试需先建会话）
-
----
-
-## 4. 决策落实状态（A–H）
-
-| 字母 | 决策 | 状态 |
-|------|------|------|
-| A | 首批 Claude Code + Codex | **双适配器已注册**（claude_code + codex） |
-| B | 一次+会话审批；永久判决二次确认；记忆自动套用 | **已实现**（once/session/always×allow+reject；两步确认服务端强制+UI 对齐） |
-| C | 被动监测 + 高危拦截 | **已实现**（高危永不自动放行；只读白名单被动放行） |
-| D | Web + Electron | **Web 控制台已实现**；Electron 壳未启动 |
-| E | 登录鉴权 + 多用户 + 远程开关 | 单 token 鉴权已实现；多用户/远程开关未做（默认仅 127.0.0.1） |
-| F | 桌面通知 + 飞书 webhook + 自动更新 | 浏览器通知 + 飞书已实现；自动更新未做 |
-| G | SQLite 90 天保留 + 导出 | **已实现**（清扫 job + 会话导出） |
-| H | ~~Open Core + 商业插件~~ → **纯 MIT** | **已变更**：用户 m15238「M3先不管，按照MIT做」→ 决策 H 废止，全仓库统一 MIT（2026-11-09 落地）；见 LICENSE / docs/license.md / THIRD_PARTY_NOTICES.md |
-
----
-
-## 5. 运行指南（开箱即用）
+### 1.1 git 状态（2026-11-10 23:20）
 
 ```
-# 启动 daemon（数据目录 ./data，token 自动生成到 data/token）
-go run ./cmd/agenthubd                      # http://127.0.0.1:8799
-# 常用 flag：-addr 127.0.0.1:8799 -data data -retention-days 90
-#            -feishu-webhook <url> -feishu-secret <sign>（或 env AGENTHUB_FEISHU_WEBHOOK/SECRET）
-
-# 接入真实 ACP agent（如 Claude Code）
-go run ./cmd/agenthub-connect -token <token> npx -y @zed-industries/claude-code-acp
-
-# 打开控制台
-# 浏览器访问 http://127.0.0.1:8799/ ，粘贴 data/token 中的 API Token
+HEAD = a01bb01 docs(license): unify repository under MIT, retire Open Core decision H
+M cmd/agenthubd/main.go
+M internal/server/web/index.html
+M internal/tasks/tasks.go
+?? internal/tasks/acp_task.go
+?? qa/pm-review-20261110/
 ```
 
-API 速查：`GET /healthz`（免鉴权）；`POST /acp/frame`；`POST /api/agent-requests`(+`/{id}/response`)；`GET /api/sessions`、`/api/sessions/{id}/export`、`/api/tool-calls?sessionId=`；`GET /api/permission-requests[?outcome=pending]`、`POST /api/permission-requests/{uid}/decision`；`GET/DELETE /api/approval-memory[/{id}]`；`GET /api/approvals`、`/api/notifications`；`GET /ws?token=`。
+未提交的四个文件是 **m17006 派发四选项（opencode/hermes）** 的改动，代码已 `go build`/`go vet`/`gofmt`/`go test` 全过，但尚未 commit。接手前建议先 commit 这四个文件，再进入后续修复。
 
-帧词汇（Hub 内部 ACP v2 draft）：入站 `initialize/session/new/session/prompt/tool_call/tool_result/session/update/session/request_permission`；出站 `session/update`、`session/request_permission`、`tool_call/approved|rejected`；WS 事件 `hello/frame.in/frame.out/frame.error/agent.request/agent.response/permission.resolved`。
+### 1.2 关键旗标与默认值
 
----
+| 旗标 | 默认 | 说明 |
+| --- | --- | --- |
+| `-addr` | `127.0.0.1:8799` | 仅回环监听，生产如需局域网需显式改址 |
+| `-data` | `data` | SQLite 与 token 目录 |
+| `-token` / `$AGENTHUB_TOKEN` | 自动生成 32 字节 hex，写入 `data/token` | Bearer 鉴权 |
+| `-retention-days` | `90` | 会话保留天数，`0` 关闭清理 |
+| `-task-concurrency` | `2` | 托管派发并发上限 |
+| `-hook-path` | `./bin/hub-hook.exe` | CC PreToolUse / Codex PermissionRequest 钩子二进制 |
+| `-wecom-aibot-*` | 空 | 企微智能机器人（长连接，推荐） |
+| `-wecom-webhook` | 空 | 企微群机器人（旧通道，与 aibot 不要混用） |
+| `-feishu-*` | 空 | 飞书自定义机器人 webhook |
 
-## 6. 下一步建议（M2 收尾 → M3）
+### 1.3 平台与已知环境约束
 
-1. **Electron 桌面壳**（决策D 余项）：包裹 Web 控制台（BrowserWindow 加载 127.0.0.1:8799），托盘、开机自启；自动更新（决策F 余项）。
-2. **多用户与远程开关**（决策E）：多 token/用户隔离、`-remote` 开关默认关。
-3. **真实 Claude Code 联调**：本机安装 `@zed-industries/claude-code-acp` 后走连接器实机验证（连接器已按其协议实现：session/new 分配 id、prompt 生命周期、request_permission 映射、fs/* 能力缺失报错——如需读写文件回调，需在连接器实现 fs/read_file、fs/write_file）。
-4. **Codex 真实接入**：Codex CLI 非 ACP 协议，需 codex 专用桥接器（Hub 侧适配器已就绪）。
-5. **UI 复测**：换常规浏览器完成武装态保持复测 + 审计/事件流 tab 手动验证。
-6. **M3**：审计导出/归档增强 + 文档站 / CI / Releases。~~Open Core 许可 + 商业插件框架~~ 已取消（决策 H 废止，改为纯 MIT，见上表 H 行）。
-
----
-
-## 7. 待选项（用户可随时指示，原样保留）
-
-- 提升权限终端跑 `node D:\DevTools\codex-elevated-verify.mjs`（Codex 受限沙箱闭环）
-- zcode CLI 派发（headless `-p` 卡在 "Select a model before sending a message"）
-- M2 项：系统终端跳转 / 内嵌 xterm.js / F6 统一操作面
-- 真实 DSH `session/request_permission` 触发
-- Codex 真实触发闭环（danger-full-access + 非提升令牌）
-- Gemini CLI 实机适配验证
-
-## 8. 环境备注
-
-- 8799 端口编写时有旧进程占用冒烟用 18799；新会话如需 8799 先确认旧进程。
-- 本机无 C 编译器（CGO_ENABLED=0）：用纯 Go 依赖（modernc.org/sqlite）；`go test -race` 不可用。
-- Bash `UID` 是只读变量，勿作变量名。
-- 冒烟临时产物已全部清理（/tmp/agenthubd*、fake-agent.mjs、wsclient 等），工作区仅含源码树。
+- Windows 首发，macOS/Linux 理论可用未验证。
+- 无 C 编译器，纯 Go 依赖（`modernc.org/sqlite`），`go test -race` 不可用。
+- Bash `UID` 是只读变量，勿用作变量名。
+- Node v25.2.1 `process.exit()` 在 Windows 上会触发 `uv_handle_closing` 断言，QA 脚本请改用 `process.exitCode`。
+- 8799 端口若有旧进程占用，先确认并释放（历史曾有 PID 14444 / 25824 / 2436 / 3592 等残留）。
 
 ---
 
-**当前状态**：M2 核心五项（双适配器、连接器、Web 控制台、通知、保留/导出）完成并有测试与实机证据；41 个测试用例全绿；等待指示进入 Electron 壳/M3 或真实 agent 联调。
+## 2. 已验证里程碑与证据
+
+### 2.1 PM 显示层复核（2026-11-10，14 条优化 + 12 张截图）
+
+证据目录：`D:\DevTools\AgentHub\qa\pm-review-20261110\`
+
+- 截图：`01-board.png` / `02-desk.png` / `03-desk-pending.png` / `04-rules-with-data.png` / `05-settings-en.png` / `06-final-restored.png` / `view-{sessions,tasks,stream,rules,terminal,settings}.png`
+- 报告：`PM-REVIEW.md`（17 KB，6 节：版本基线 / 17 项真人点击覆盖矩阵 / 已修复明确剔除 / 14 条优化 / 复核残留 / 遗留边界）
+- 已剔除的旧账（不再重复计入本轮优化）：移动端导航拥挤 `a20dc39`+`82a3b59`、xterm CDN 本地化 `baef4a0`、`82a3b59`、三语无损还原与原生目录框 `29d3d0a`、派发下拉四选项 m17006。
+
+### 2.2 m17006 派发四选项（opencode / hermes 托管派发）
+
+- 代码：`internal/tasks/tasks.go`（`Enqueue` 放开 4 kind、`resolveAgentBinary` 4 kind、`spawnCommand` 新增 opencode→`opencode acp`、hermes→`hermes-acp`、`streamTask` 路由 `streamACP`、`SetPermissionDecider`）；新建 `internal/tasks/acp_task.go`；`cmd/agenthubd/main.go` 接 `queue.SetPermissionDecider`；`index.html` `#task-kind` 新增 OpenCode/Hermes 选项。
+- 验证：`go build`/`go vet`/`gofmt`/`go test -count=1` 全绿；`D:\DevTools\acp-dispatch-e2e.mjs` pass=45 fail=0（codex/opencode/hermes 各 15 断言）；高危 opencode→200 `task_1181417b`。
+- 动态复现：隔离 daemon 端口 18899，伪 ACP 伪装 opencode，`POST /api/tasks`→200 `task_94e918b3`，ACP 伪造服务器收到 `initialize` + `session/prompt`（sessionId 回退为 Hub 的 `task-*`，未收 `session/new`），任务落库 `finished` 但会话行保持 `active/turns=0/tokens=0`。
+- 二进制：`bin/agenthubd.exe` 19,440,128 B，已同步至 `install/resources/bin/` 与 `desktop/dist/win-unpacked/resources/bin/`。
+
+### 2.3 企微智能机器人通道（aibot）
+
+- 代码：`internal/server/wecom.go` 重写为 `wecomTransport` 接口；新建 `internal/server/wecom_aibot.go`（`WecomAibotConfig`/`Post`/`Tail`/`call`/`truncateUTF8`）；`cmd/agenthubd/main.go` 新增 `-wecom-aibot-*` 四旗标 + env `AGENTHUB_WECOM_AIBOT_*`；`internal/server/wecom_aibot_test.go` 7 个测试（未跑）。
+- 协议：`wss://openws.work.weixin.qq.com`，`aibot_subscribe` → `aibot_send_msg`，按 `headers.req_id` 关联，content ≤20480 字节，限频 30 条/分 1000 条/小时，前置：用户需先在目标会话给机器人发过至少一条消息。
+- 真机：`aibot_subscribe` 返回 `errcode=0`（新凭据 `aibVFDkQM0bWbgBhS0xwQF3VrheG80IMo-0` / `nL4J7onuO892csF1txsOxNy9DaiwS78DBF3OdYKD5l5` 有效）；`aibot_send_msg` 持续返回 `846607 aibot send msg frequency limit exceeded`。独立 Node+`ws` 参考实现 `D:\DevTools\wecom-aibot-diff.mjs` 同样失败，**属官方账号维度服务端限频，与代码 / chat_type / Go-Node 实现无关**。
+- 旧凭据 `aibsGENHq...` / `v3XB1oKqL9LeKtxDTtOOKxw8b4lkwahkcfhFSlYlQOy` 已失效（`853000 invalid bot_id or secret`）。
+
+### 2.4 其他已交付（历史摘录）
+
+- ACP 适配器：ACP v1 stdio JSON-RPC，`handleFrame` 先判 `Method != ""` 分派（server request 也带 id，不能用 id 存在性判断）；`daemon/acp.go` bridge + `server/acp.go` 4 路由；`agent_kind=dsh` / `origin=managed` / `instance_id=acp:<id>`。
+- F7 会话续跑：`POST /api/sessions/{id}/continue`，仅 `origin=managed` 且 `instance_id` 前缀 `acp:`；fire-and-forget + 单飞 + 30min 上限；事件 payload 不含 prompt 文本。
+- F9 通知：浏览器手势授权 + `isSecureContext` 门控 + `localStorage tarmac.notifyDesktop/notifyTask` + 摘要 + tag 去重；daemon 侧飞书 webhook（高危/failed/dead/error 立即推、finished 仅 task_completion 开启；30s 静默；HMAC 签名；只回显尾号；绝不读 ArgsDigest/ResultDigest/Content）。
+- 连接器：`internal/connector/connector.go` stdio↔daemon 桥，`wsEnvelope` 加 `AgentKind` 做多 connector 隔离。
+- 安全：`token_acl_windows.go` icacls 锁 token DACL；`CheckOrigin` 收窄为 `127.0.0.1:8799`/`localhost:8799` + env `AGENTHUB_WS_ALLOW_ORIGINS`；`-retention-days` 默认 `"90"`。
+- 桌面：Electron `desktop/main.js` `SHARED_DATA_DIR → app.getPath("userData")`；xterm.js 资产已 vendor 到 `internal/server/web/vendor/`（`@xterm/xterm@5.5.0` + `@xterm/addon-fit@0.10.0`，MIT）；`/vendor/{name}` + `/favicon.ico` 端点。
+
+---
+
+## 3. 测试工作（Test Work）
+
+以下从**重度 Vibe Coding 用户视角**拆解，核心关注点是「操作步骤之间的串联性 + 数据在步骤间的流转 + 最终数据处理结果是否正确」。每条用例写明：前置条件、操作步骤、预期结果、校验点（API 响应 + SQLite 行 + 前端 DOM）、优先级。
+
+### 3.1 P0：端到端派发链路（数据流必须闭环）
+
+| ID | 用例 | 前置 | 操作步骤 | 预期结果 | 校验点 |
+| --- | --- | --- | --- | --- | --- |
+| T-P0-01 | 派发 opencode 任务 | daemon 在线，token 可用 | 页面「任务」视图选 OpenCode，填 prompt，点「派发 →」 | 任务入队，状态 `queued`→`started`→`finished` | `POST /api/tasks` 200；`/api/sessions/{id}` status；SQLite `tasks.state=finished`；前端行状态丸变绿 |
+| T-P0-02 | ACP `session/new` 必须发出 | 同上 | 派发 opencode 任务，观察伪 ACP 服务器 stdin 日志 | 伪 ACP 收到 `initialize` **后必须收到 `session/new`** | 伪 ACP `FAKE_LOG` 中 `METHOD=session/new` 出现；若无 → P0-A 断点未修 |
+| T-P0-03 | ACP `session/prompt` 用正确 sessionId | 同上 | 派发 opencode 任务 | `session/prompt` 的 `sessionId` 应为 ACP server 生成的 `ses_*`/`local-*`，而非 Hub 的 `task-*` | 伪 ACP 日志 `sessionId` 值；若为 `task-*` → P0-A/P0-C 断点未修 |
+| T-P0-04 | `session/update` 不被吞掉 | 同上 | 派发任务，伪 ACP 发 2 条 unsolicited `session/update` | Hub 应接收并派发为 `session/update` 事件，前端出现进度 | `/api/events` 有 `session/update` 条目；若为空 → P0-B 断点未修 |
+| T-P0-05 | 任务结束会话必须入终态 | 同上 | 派发任务至 `finished` | 会话行 `status` 变为终态、`turns`/`tokens` 非零、`isTerminal=true` | SQLite `sessions` 行；若仍 `active/0/0/false` → P0-D 断点未修 |
+| T-P0-06 | 取消 running 任务状态回写 | 有一条 running 任务 | 点「取消」 | 任务状态 `cancelled`，不再自动重跑；前端行不再显示 `running` | SQLite `tasks.state=cancelled`；`/api/tasks` 返回 cancelled；无自动重跑日志 |
+| T-P0-07 | 审批四选项闭环 | 高危 prompt 触发 `session/request_permission` | 放行台点「放行一次/该 session 下放行/放行 Always/拒绝」 | 判决落 `approval_history` + `permission_resolved` 事件；agent 收到对应 optionId | `/api/permission-requests/{uid}/decision` 200；SQLite `approvals` 表；前端卡片消失 |
+| T-P0-08 | 放行 Always 二次确认 | 同上 | 第一次点「放行 Always」 | toast 提示需要二次确认；第二次点才落决策 | 前端按钮 `.arm` 状态；SQLite `confirm_count=2` |
+| T-P0-09 | 规则生效后自动放行 | 已有 `allow_always` 规则 | 再次派发匹配 pattern 的任务 | 无需人工放行，直接执行 | SQLite `rules` 表命中；任务无阻塞直接 `finished` |
+| T-P0-10 | 重启孤儿任务标记失败 | daemon 重启，有 running 任务 | 重启 daemon | 原 running 任务改 `failed`，error 含 `daemon restart during run` | SQLite `tasks.state=failed`；前端行显示失败；会话行不应仍保持 active |
+
+### 3.2 P1：数据持久与清理
+
+| ID | 用例 | 前置 | 操作步骤 | 预期结果 | 校验点 |
+| --- | --- | --- | --- | --- | --- |
+| T-P1-01 | 保留期只删 sessions，tasks 永不清理 | `-retention-days` 非 0 | 等待清扫 ticker（或手工触发） | 过期 sessions 被删；过期 tasks 表**不应**被级联删除 | SQLite `tasks` 表行数不减；若减 → 违背设计（tasks 应独立保留或显式清理） |
+| T-P1-02 | 会话导出完整性 | 有包含系统放行的会话 | `GET /api/sessions/{id}/export` | 导出包含所有 permission_requests（含 `permission_request_id IS NULL` 的系统放行） | 导出 JSON/MD；若系统放行缺失 → 导出不完整 |
+| T-P1-03 | 导出包含 tasks / notifications / rules / 事件 | 同上 | 同上 | 导出 bundle 除 Session/ToolCalls/PermissionRequests/Approvals 外，还含 tasks、notifications、rules、事件 | 导出 JSON 字段完整性 |
+| T-P1-04 | 通知设置持久化 | 浏览器开关 | 切「桌面通知」/「任务完成通知」开关 | 开关状态跨刷新/重启保持；`/api/notify/status` 反映真实状态 | 前端 localStorage；API 响应；若硬编码 `true` 无法变更 → 设置是假的 |
+| T-P1-05 | 暂停派发持久化 | 点「暂停派发」 | 刷新页面 | 暂停状态应保持 | SQLite 或文件持久化；若刷新后恢复 → P1 暂停不落库 |
+
+### 3.3 P2：安全与边界
+
+| ID | 用例 | 前置 | 操作步骤 | 预期结果 | 校验点 |
+| --- | --- | --- | --- | --- | --- |
+| T-P2-01 | token 不应完整注入 HTML | 打开 `http://127.0.0.1:8799/` | 查看页面源码 | token 应被掩码或不注入完整值 | `boot.token` 字段；若完整 token 明文 → 安全缺陷 |
+| T-P2-02 | `/ws`  origin 收窄 | 浏览器开发者工具 | 连接 WS | `CheckOrigin` 应仅允许 `127.0.0.1:8799`/`localhost:8799` | 主 WS upgrader；若 `return true` → 跨站 WebSocket 劫持风险 |
+| T-P2-03 | `?token=` 不应进 URL | 任务 | 带 `?token=` 请求 API | 服务器应拒绝或忽略查询参数 token | 日志 / Referer 中不应出现 token |
+
+### 3.4 执行方式
+
+- 自动化：`D:\DevTools\qa\scripts\` 下 Python 脚本（`qa_cli_integrate.py`、`qa_envelope.py`、`qa_notify_matrix.py`、`qa_perf_gate.py`、`qa_queue_e2e.py`、`qa_recovery.py`、`qa_sec_endpoints.py`、`common.py`）可直接复用或改写。
+- 半自动：伪 ACP `D:\DevTools\AgentHub\qa\dataflow-repro\fakeacp.exe`（`FAKE_LOG` 记录每帧、`FAKE_MODE=normal/hold`）用于隔离 daemon 动态复现 P0-A/P0-B/P0-C。
+- 人工：页面逐视图点击（见上一轮 `PM-REVIEW.md` 的 17 项覆盖矩阵）。
+
+---
+
+## 4. 后续优化改进（共 38 条，去重合并）
+
+每条带：级别、问题、根因（路径+行号）、修复建议、验证边界。**不记录评分**（用户硬约束 m17580）。
+
+### 4.1 P0（数据流断点，必须先修）
+
+| # | 问题 | 根因 | 修复建议 | 验证边界 |
+| --- | --- | --- | --- | --- |
+| P0-1 | `session/new` 请求从未发出 | `internal/tasks/acp_task.go:84-99` 只 encode `initialize`，`:101-114` 注释「2. session/new」后零 encode，`:116-127` 直接发 `session/prompt` | 在 `streamACP` 中显式 `enc.Encode({"method":"session/new","params":{"cwd":t.CWD,"mcpServers":[]}})`，读响应取 `sessionId` | 伪 ACP `FAKE_LOG` 出现 `METHOD=session/new`；`session/prompt` 的 `sessionId` 为 `ses_*`/`local-*` |
+| P0-2 | 混用 reader 丢数据 | `:65` `json.NewDecoder(stdout)` 预读缓冲与 `:129` `bufio.NewScanner(stdout)` 共读同一 stdout 管道 | 统一用 `bufio.Scanner` 逐行处理，或用单一 `json.Decoder` 不再混用 Scanner | 伪 ACP 发 2 条 `session/update` 后 `/api/events` 有对应条目，不再静默丢帧 |
+| P0-3 | progress 全部丢弃 | `:166-169` 原样 `q.Dispatch(..., "session/update", msg.Params)`，ACP params 是 `{sessionId, update:{...}}`，`adapter.go:1227-1235` 只解顶层字段 → 全空；且 `sessionId` 是 agent id，Hub 只有 `task-*` 行 → `unknown session` | `handleACPLine` 解析 `{sessionId, update}`，按 `sessionId` 映射到 Hub task 行，或在 `handleSessionUpdate` 中按 `payload.SessionID` 先按 agent session 索引再回填 task | `/api/events` 有 `session/update` 带 `session_id`；前端进度条/文本有变化 |
+| P0-4 | 最终结果不回写会话 | `tasks.go:317-321` 只 `TaskFinished + UpdateTask + emit("finished")`，**从不 UpdateSession** | 任务结束后调用 `UpdateSession` 设 `isTerminal=true`、`turns`、`tokens`、`status` 终态 | SQLite `sessions` 行 `isTerminal=true`、`turns>0`；导出档案会话状态正确 |
+| P0-5 | 取消 running 任务不落库 + 自动重试 | `tasks.go:197-203` running 分支只 `cancel()` 不落库；`:303-316` `fresh.State==TaskCancelled` 永不成立；`:327-345` `Retries<MaxRetries` 改回 `queued` 重跑 | Cancel 时 `t.State=TaskCancelled` + `UpdateTask`；重启守护 goroutine 跳过 cancelled 任务；或 `fail()` 不自动重跑 cancelled | 点取消后 SQLite `state=cancelled`；前端行显示 cancelled；无自动重跑 |
+| P0-6 | 重启态与会话不一致 | `recoverOrphans()` `tasks.go:92-105` 只把 running→failed，**不动 sessions 行** | 孤儿恢复时同步把关联 session 设 `is_closed=true`/`is_terminal=true` | 重启后 `sessions` 行不再保持 `active` |
+
+### 4.2 P1（持久化与一致性）
+
+| # | 问题 | 根因 | 修复建议 | 验证边界 |
+| --- | --- | --- | --- | --- |
+| P1-1 | `UpdateSession` 不持久化关键列 | `store.go:108-116` UPDATE 只含 status/turns/tokens/last_error/is_terminal/is_closed/title/updated_at | UPDATE 加入 `cwd/agent_kind/origin/parent_session_id` | 重试后 `existing.CWD` 落库不丢失；`sessions` 行可查询这些列 |
+| P1-2 | retention 只删 sessions | `store.go:502-512` 仅 `DELETE FROM sessions WHERE updated_at < ?`；tasks/rules 无 FK | 加 `DELETE FROM tasks WHERE session_id IN (...)` 或独立 tasks 保留策略；rules 加 `session_id` FK 级联 | 清扫后 `tasks`/`rules` 不过期残留 |
+| P1-3 | 会话导出排除系统放行 | `store.go:596-645` `JOIN permission_requests` 导致 `permission_request_id IS NULL` 的系统放行全部排除 | 改为 `LEFT JOIN` 或分两段查询，把系统放行也纳入 | 导出包含所有 permission_requests，无遗漏 |
+| P1-4 | 导出不含 tasks/notifications/rules/事件 | 同上，bundle 只含 Session/ToolCalls/PermissionRequests/Approvals/ExportedAt | 扩展 `ExportSession` 聚合 tasks、notifications、rules、事件 | 导出 JSON 字段完整 |
+| P1-5 | 事件纯内存，重启即失 | `bridge.go:80-83` `uiEventRingCap=500`，`recordUIEvent` 纯内存 | 事件落 SQLite（新表 `ui_events`），`GET /api/events` 优先读库 | 重启后 `/api/events` 仍有历史事件 |
+| P1-6 | 通知设置硬编码 | `console.go:150-162` `"desktop":true,"task_completion":true`，不读浏览器权限/localStorage | 读取浏览器授权状态 + localStorage，跨设备同步 | 开关可变更，`/api/notify/status` 反映真实值 |
+| P1-7 | 任务完成通知链路未接通 | `Bridge.TaskEvent` `bridge.go:464-478` 只 recordUIEvent，**不触发 notifier** | 任务 `finished/failed` 时触发 notifier（按用户开关） | 任务完成后桌面/飞书/企微收到通知 |
+| P1-8 | 继续会话血缘丢失 | `console.go:457-472` `parent_session_id` 不写库；新 session 行异步创建，返回 id 当下不存在 | 重派发时同步写 `parent_session_id` 到 sessions 表 | 查询可追溯会话血缘 |
+| P1-9 | fork 是死路 | `console.go:191-215` 只 `CreateSession + RecordFork`，无 agent 进程/connector 接管 | fork 后启动对应 agent 进程或标记为待接入，避免 ghost session | fork 后会话可继续派发，不再永久 ghost |
+| P1-10 | 判决事件缺 session 关联 | `bridge.go:271-293` `recordPermissionResolved` UIEvent 未设 `SessionID` | 构造 UIEvent 时填入 `SessionID` | 事件流可按 session 过滤判决记录 |
+| P1-11 | 派发无前置校验/幂等 | `tasks.go:140-161` 只校验 kind/cwd/prompt 非空；无 cwd 存在性、二进制存在性、idempotency key、prompt 长度上限 | Enqueue 前校验 `cwd` 是否存在、`resolveAgentBinary` 是否找到二进制；加 `idempotency_key`；prompt 长度上限 | 重复 dispatch 同 idempotency key 只生成一个任务；cwd 不存在直接 400 |
+| P1-12 | `Retry` 只接受 failed | `tasks.go:164-180` `cancelled` 任务永远无法重启 | `Retry` 接受 `failed` 和 `cancelled` | cancelled 任务可重新派发 |
+| P1-13 | 暂停状态不持久 | `tasks.go:212-231` `paused` 纯内存 bool | Pause/Resume 落 SQLite 或配置文件 | 重启后暂停状态保持 |
+| P1-14 | 规则/判决语义不联动 memory | `adapter.go:1045-1067` `allow_session/allow_always` 只写 rules，`else` 分支才写 memory；`RemoveRule` 不联动 `approval_memory` | 判决后同步更新 `approval_memory`；删除规则时联动清理 memory | 规则删除后 memory 不残留；跨 Agent 不串味 |
+| P1-15 | `rules.MatchFirst` 不匹配 `agent_kind` | `rules.go:99-140` 注释 `:37` 明示 audit-only | `MatchFirst` 加入 `agent_kind` 匹配 | 同 pattern 不同 Agent 规则隔离 |
+| P1-16 | 状态映射漏终态 | `bridge.go:199-215` `status:completed` 但无 `isComplete` 时落 `idle` | 增加 `completed`→`finished` 映射 | 任务 `completed` 后 UI 显示 finished |
+| P1-17 | 原始错误直抛 + 通道错配 | `console.go:167-185` 完整错误串入 502；`testNotify()` 硬编码「飞书测试消息已发送」 | 错误脱敏（只保留 errcode，去掉 hint/IP）；测试 toast 按实际 channel 本地化 | 502 不含 hint/出口 IP；toast 显示「企微测试消息已发送」 |
+| P1-18 | 会话视图 prompt 截断 U+FFFD | `index.html` 长 prompt 60 字硬截断 | 加展开/复制；不截断或截断后可完整查看 | 长 prompt 可完整阅读和复制 |
+| P1-19 | 继续会话无差别开放 | 9 张卡全带「继续此会话」，输入完才吃 409 | 附加态探测（仅 attached claude_code/codex 可续跑），其他显示 409 提示 | opencode/hermes 继续 → 409 `不支持原生续跑` |
+
+### 4.3 P2（体验与安全）
+
+| # | 问题 | 根因 | 修复建议 | 验证边界 |
+| --- | --- | --- | --- | --- |
+| P2-1 | 「拒绝」名不副实 | `index.html:1062` `data-action="taskCancel"` 文案 `t("拒绝")` | 改文案为「取消任务」或拆分「取消」与「拒绝审批」 | 前端文案与行为一致 |
+| P2-2 | 状态/错误文本矛盾 | `tasks.go:332` `q.fail` 先写 error 后 `TaskQueued`；`index.html:1068` 无条件拼 `task.error` | 状态 `queued` 时不显示错误文本；或错误仅在 `failed` 态展示 | 重试态行不显示旧错误 |
+| P2-3 | 暂停/恢复无反馈 | `index.html:1778-1783` 只 `S.tasksPaused + renderTasks()`，无 toast | 加 toast「已暂停派发」/「已恢复派发」 | 点击后 toast 出现 |
+| P2-4 | 查看会话不定位 | `setView(v)` 只切 view，无滚动/高亮 | 点「查看会话」后滚动到目标卡并高亮 | 目标卡 rectTop 可见，`highlighted=true` |
+| P2-5 | 6 个 h1 缺 en/ja 词条 | `DICT.en` 仅 2 个 key，其余 6 个缺 | 补全 `DICT.en` / `DICT.ja` 的 8 个 h1 key | 切英文/日文后标题全部翻译 |
+| P2-6 | 运行时数据不本地化 | `taskErrorsEn` 等运行时字符串不进词典 | 把运行时错误/状态文本本地化 | 切英文后错误文本翻译 |
+| P2-7 | 目录浏览器无搜索/输入 | `fsModal` 42 个按钮 0 input，深路径只能逐级点 | 加路径输入框 + 搜索过滤 | 输入路径可直接跳转 |
+| P2-8 | 终端能力脱节 | 终端页「仅 claude_code / codex 支持」但无提示说明原因 | 加不可用原因提示，或扩展到 opencode/hermes | 用户明白终端不可用原因 |
+| P2-9 | token 明文展示 | `index.html:1841` `TOKEN.slice(0,10)+"…"+TOKEN.slice(-6)` | 掩码更严格，或提供「显示/隐藏」开关 | token 首尾不直接明文 |
+| P2-10 | 企微 846607 无退避降级 | 官方服务端限频，代码无降级策略 | 加指数退避 + 剩余时间提示 + 降级至日志/本地队列 | 限频期间不反复报 502，用户可见预计恢复时间 |
+| P2-11 | 移动端导航重构（历史已修，保留作为参考） | `baef4a0`/`82a3b59` 已修 | —— | ——（已剔除，勿重复计） |
+
+> 已剔除（勿重复计入本轮）：移动端 8 tab 拥挤 `a20dc39`、`82a3b59`；xterm CDN 不可达 `baef4a0`；三语无损还原 `29d3d0a`；原生目录框 `29d3d0a`；派发下拉四选项 m17006。
+
+---
+
+## 5. 测试回归事项（Regression）
+
+### 5.1 回归测试集
+
+| 回归项 | 验证方式 | 自动/人工 | 触发时机 |
+| --- | --- | --- | --- |
+| R-01 派发→ACP 握手→session/new→session/prompt | 伪 ACP `fakeacp.exe` + 隔离 daemon 18899 | 自动 | 每次 commit |
+| R-02 审批四选项闭环 | `three-client-contract.mjs`（pass=45 fail=0 可复用） | 自动 | 每次 commit |
+| R-03 取消/重试状态回写 | 页面点击 + SQLite 检查 | 半自动 | 每次 commit |
+| R-04 规则生效自动放行 | `review-regression.mjs` 可复用 | 自动 | 每次 commit |
+| R-05 重启孤儿任务 | 杀 daemon 重启，检查任务/会话状态 | 半自动 | 发布前 |
+| R-06 保留期清理 | 设 `-retention-days` 短值，检查 tables | 自动 | 发布前 |
+| R-07 会话导出完整性 | `GET /api/sessions/{id}/export` 字段核对 | 自动 | 发布前 |
+| R-08 通知链路（飞书/企微/桌面） | `qa_notify_matrix.py` + `/api/notify/test` | 半自动 | 发布前 |
+| R-09 三语切换 | 页面 `[data-lang-set]` en→ja→zh-CN | 半自动 | 每次 commit |
+| R-10 安全基线（token/WS origin/?token=） | `qa_sec_endpoints.py` | 自动 | 每次 commit |
+
+### 5.2 回归脚本资产
+
+- `D:\DevTools\qa\scripts\common.py`：公共工具。
+- `D:\DevTools\qa\scripts\qa_cli_integrate.py`：CLI 集成。
+- `D:\DevTools\qa\scripts\qa_envelope.py`：信封契约。
+- `D:\DevTools\qa\scripts\qa_notify_matrix.py`：通知矩阵。
+- `D:\DevTools\qa\scripts\qa_perf_gate.py`：性能闸门（审批 p95 ≤1s）。
+- `D:\DevTools\qa\scripts\qa_queue_e2e.py`：队列 E2E。
+- `D:\DevTools\qa\scripts\qa_recovery.py`：恢复/重启。
+- `D:\DevTools\qa\scripts\qa_sec_endpoints.py`：安全端点。
+- `D:\DevTools\qa\dataflow-repro\fakeacp.exe`：确定性伪 ACP（`FAKE_LOG` / `FAKE_MODE`）。
+- `D:\DevTools\acp-dispatch-e2e.mjs`：opencode/hermes dispatch 契约。
+- `D:\DevTools\wecom-aibot-diff.mjs`：企微协议差分参考。
+
+### 5.3 已知残留（不自动清理）
+
+- 4 条 `pm-review-live-*` 会话/权限请求/事件保留未删（「清空全部记录」是 m15556 独立指令，本轮未重新授权；归档先例 `D:\DevTools\_archive\agenttarmac-20261109-0730\`）。
+- m17006 四文件未 commit（`M cmd/agenthubd/main.go`、`M internal/server/web/index.html`、`M internal/tasks/tasks.go`、`?? internal/tasks/acp_task.go`）。
+
+---
+
+## 6. 遗留开放目标
+
+| 目标 | 状态 | 备注 |
+| --- | --- | --- |
+| 企微 846607 服务端限频 | 非我方可控 | 独立参考实现同样失败；窗口过后验证 `{"channel":"wecom","ok":true}` |
+| Codex 受限沙箱复跑 | 待用户操作 | 需管理员 PowerShell 运行 `D:\DevTools\codex-elevated-verify.mjs`（脚本已修 4 处） |
+| m17006 四文件 commit | 待执行 | build/vet/test 已全绿 |
+| M3 按 MIT 整理 | 用户暂缓 | `a01bb01` 已完成纯 MIT 统一，M3 文档站/发布流程/社区运营后续再做 |
+
+---
+
+## 7. 接手动作（建议顺序）
+
+1. **先 commit m17006 四文件**；清理工作树，建立干净基线。
+2. **修复 P0-1 ~ P0-6**（数据流断点）：
+   - `acp_task.go` 补 `session/new` encode；统一 reader（P0-A/P0-B）。
+   - `acp_task.go` 解析 `{sessionId, update}`，映射到 Hub task 行（P0-C）。
+   - `tasks.go` 任务结束后 `UpdateSession` 入终态（P0-D）。
+   - `tasks.go` Cancel 落库 + 跳过 cancelled 自动重跑（P0-E）。
+   - `recoverOrphans()` 同步关闭 sessions（P0-F）。
+   - 每条修复后用 `fakeacp.exe` + 隔离 daemon 动态复现，保留 `FAKE_LOG` 作为证据。
+3. **修复 P1 持久化与一致性**（P1-1 ~ P1-18），补 SQLite 回写、导出扩展、事件持久化、通知链路。
+4. **修复 P2 体验与安全**（P2-1 ~ P2-10），补 i18n 词条、token 掩码、WS origin 收窄、目录搜索、企微降级。
+5. **补回归自动化脚本**：把 R-01 ~ R-10 纳入 CI，每次 commit 跑 R-01/R-02/R-09/R-10，发布前跑全集。
+6. **写回归报告**：每次回归记录通过/失败项，保留 `qa/` 证据目录。
+
+---
+
+## 8. 交付检查清单（接手前确认）
+
+- [ ] `git status` 干净，m17006 四文件已 commit
+- [ ] `go build ./...` / `go vet ./...` / `gofmt -l .` / `go test ./... -count=1` 全绿
+- [ ] P0-1 ~ P0-6 各有一条 `FAKE_LOG` 动态复现证据
+- [ ] HANDOFF.md 与当前代码基线一致（无已修未记录项）
+- [ ] `qa/pm-review-20261110/` 12 张截图 + `PM-REVIEW.md` 完整
+- [ ] `qa/dataflow-repro/` `fakeacp.exe` + `inspect_db.py` 可复用
+- [ ] 4 条 `pm-review-live-*` 残留已知晓，不误删
+
+---
+
+**接手联系人**：Team Lead `lead`。文档中的路径均为 Windows 绝对路径，如需在其他环境复用请按需替换盘符和分隔符。

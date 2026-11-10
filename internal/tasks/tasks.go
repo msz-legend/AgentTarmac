@@ -48,11 +48,12 @@ type Store interface {
 
 // Queue is the task dispatcher. All methods are safe for concurrent use.
 type Queue struct {
-	store       Store
-	sink        EventSink
-	frames      FrameDispatch
-	hookCommand string // hub-hook command for managed CC approvals
-	concurrency int
+	store             Store
+	sink              EventSink
+	frames            FrameDispatch
+	hookCommand       string // hub-hook command for managed CC approvals
+	permissionDecider func(ctx context.Context, kind string, in acpclient.HookIntake) (acpclient.Decision, string, error)
+	concurrency       int
 
 	mu      sync.Mutex
 	paused  bool
@@ -137,8 +138,9 @@ func (q *Queue) loop() {
 
 // Enqueue adds a task (PRD D13: 派发) and wakes the dispatcher.
 func (q *Queue) Enqueue(ctx context.Context, agentKind, cwd, prompt string) (*acpclient.Task, error) {
-	if agentKind != acpclient.AgentKindClaudeCode && agentKind != acpclient.AgentKindCodex {
-		return nil, fmt.Errorf("tasks: agent kind %q is not drivable (v1: claude_code | codex)", agentKind)
+	if agentKind != acpclient.AgentKindClaudeCode && agentKind != acpclient.AgentKindCodex &&
+		agentKind != acpclient.AgentKindOpenCode && agentKind != acpclient.AgentKindHermes {
+		return nil, fmt.Errorf("tasks: agent kind %q is not drivable (v1: claude_code | codex | opencode | hermes)", agentKind)
 	}
 	if strings.TrimSpace(cwd) == "" || strings.TrimSpace(prompt) == "" {
 		return nil, fmt.Errorf("tasks: cwd and prompt are required")
@@ -354,9 +356,18 @@ func (q *Queue) emit(t *acpclient.Task, action string) {
 // clear error when the CLI is not installed (PRD F6: fail fast with an
 // actionable message instead of an opaque exec error at spawn time).
 func resolveAgentBinary(kind string) (string, error) {
-	name := "claude"
-	if kind == acpclient.AgentKindCodex {
+	var name string
+	switch kind {
+	case acpclient.AgentKindClaudeCode:
+		name = "claude"
+	case acpclient.AgentKindCodex:
 		name = "codex"
+	case acpclient.AgentKindOpenCode:
+		name = "opencode"
+	case acpclient.AgentKindHermes:
+		name = "hermes-acp"
+	default:
+		return "", fmt.Errorf("tasks: unknown agent kind %q", kind)
 	}
 	p, err := exec.LookPath(name)
 	if err != nil {
@@ -409,6 +420,18 @@ func (q *Queue) spawnCommand(ctx context.Context, t *acpclient.Task, sessionID s
 		cmd.Dir = t.CWD
 		return cmd, file, nil
 	}
+	// opencode (ACP stdio server: `opencode acp`).
+	if t.AgentKind == acpclient.AgentKindOpenCode {
+		cmd := exec.CommandContext(ctx, bin, "acp")
+		cmd.Dir = t.CWD
+		return cmd, "", nil
+	}
+	// hermes (ACP stdio server: `hermes-acp`).
+	if t.AgentKind == acpclient.AgentKindHermes {
+		cmd := exec.CommandContext(ctx, bin)
+		cmd.Dir = t.CWD
+		return cmd, "", nil
+	}
 	// codex
 	cmd := exec.CommandContext(ctx, bin, "exec", "--json", t.Prompt)
 	cmd.Dir = t.CWD
@@ -418,6 +441,12 @@ func (q *Queue) spawnCommand(ctx context.Context, t *acpclient.Task, sessionID s
 // streamTask parses the agent's JSONL stdout and routes tool frames through
 // the standard pipeline (same mapping as native resume).
 func (q *Queue) streamTask(ctx context.Context, t *acpclient.Task, sessionID string, cmd *exec.Cmd) error {
+	// opencode/hermes are driven as stdio ACP servers (bidirectional JSON-RPC
+	// with unified Hub approval), not line-mapped like Claude Code / Codex.
+	if t.AgentKind == acpclient.AgentKindOpenCode || t.AgentKind == acpclient.AgentKindHermes {
+		return q.streamACP(ctx, t, sessionID, cmd)
+	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -481,6 +510,13 @@ func truncate(s string, n int) string {
 // portable fake agent).
 func (q *Queue) SetSpawner(fn func(ctx context.Context, t *acpclient.Task, sessionID string) (*exec.Cmd, string, error)) {
 	q.spawner = fn
+}
+
+// SetPermissionDecider injects the approval inbox for ACP-managed tasks
+// (opencode/hermes). main.go wires it to Bridge.AdapterFor(kind).IntakeToolCall
+// so every tool call lands in the same unified Hub approval queue.
+func (q *Queue) SetPermissionDecider(fn func(ctx context.Context, kind string, in acpclient.HookIntake) (acpclient.Decision, string, error)) {
+	q.permissionDecider = fn
 }
 
 // GetTask proxies the store lookup (server.TaskQueue interface).

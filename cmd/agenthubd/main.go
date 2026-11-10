@@ -95,6 +95,18 @@ func main() {
 	queue := tasks.New(store, bridge, runnerSink{bridge: bridge}, resolveHookCommand(*hookPath), *taskConc)
 	srv.SetTasks(queue)
 
+	// ACP-managed tasks (opencode `acp` / hermes-acp) route every
+	// session/request_permission through the unified Hub inbox: the same
+	// BaseAdapter the connectors use answers the gate, so a human verdict in
+	// the placement queue unblocks the agent exactly like CC/Codex hooks.
+	queue.SetPermissionDecider(func(ctx context.Context, kind string, in acpclient.HookIntake) (acpclient.Decision, string, error) {
+		a, err := bridge.AdapterFor(kind)
+		if err != nil {
+			return acpclient.TimedOutDecision(), "", err
+		}
+		return a.IntakeToolCall(ctx, in, acpclient.IntakeTimeout)
+	})
+
 	// File-system browser + recent-CWD memory for task dispatch (PC + Web).
 	srv.SetFSBrowser(*data)
 	if hookCmd := resolveHookCommand(*hookPath); hookCmd != "" {

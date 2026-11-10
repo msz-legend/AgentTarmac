@@ -1,14 +1,15 @@
 // Fake ACP stdio server for deterministic AgentHub data-flow trials (v2).
 //
 // Env:
-//   FAKE_LOG        path to append every frame received from Hub (stdin)
-//   FAKE_MODE       normal (default): responds to session/prompt with a result
-//                   hold: never responds to session/prompt; keeps stdout open
-//                   perm: before answering session/prompt, sends a
-//                         session/request_permission server request and waits
-//                         for the Hub's response (logged), then answers.
-//   FAKE_SESSIONID  agent session id reported in session/new result
-//                   (default ses_FAKE_0001)
+//
+//	FAKE_LOG        path to append every frame received from Hub (stdin)
+//	FAKE_MODE       normal (default): responds to session/prompt with a result
+//	                hold: never responds to session/prompt; keeps stdout open
+//	                perm: before answering session/prompt, sends a
+//	                      session/request_permission server request and waits
+//	                      for the Hub's response (logged), then answers.
+//	FAKE_SESSIONID  agent session id reported in session/new result
+//	                (default ses_FAKE_0001)
 package main
 
 import (

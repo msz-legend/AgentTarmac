@@ -68,6 +68,24 @@ CREATE TABLE IF NOT EXISTS tasks (
     finished_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_state ON tasks(state);`},
+	// 0006 persists the console event stream (vibe-trial B5: events used to
+	// live only in a 500-entry in-memory ring and evaporated on every
+	// daemon restart, severing the audit trail from the session archive).
+	{"0006_ui_events", `
+CREATE TABLE IF NOT EXISTS ui_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    agent_kind TEXT NOT NULL DEFAULT '',
+    session_id TEXT NOT NULL DEFAULT '',
+    payload TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_ui_events_ts ON ui_events(ts);
+CREATE INDEX IF NOT EXISTS idx_ui_events_session ON ui_events(session_id);`},
+	// 0007 attributes approval_history rows to their session (vibe-trial
+	// B3: system verdicts with permission_request_id IS NULL were lost by
+	// the export's INNER JOIN because the table carried no session column).
+	{"0007_approval_session", `ALTER TABLE approval_history ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`},
 }
 
 // ErrNotFound is returned by store lookups when the requested row does not exist.

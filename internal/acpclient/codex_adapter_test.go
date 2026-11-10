@@ -59,9 +59,10 @@ func TestCodexAdapterKindAndGate(t *testing.T) {
 		// rule (empty pattern = matches any argument).
 		t.Fatalf("rule shape: %+v", r)
 	}
-	// No legacy allow memory is written anymore.
-	if mem, _ := store.GetApprovalMemory(context.Background(), AgentKindCodex, "apply_patch", "*"); mem != nil {
-		t.Fatalf("allow memory should be replaced by rules: %+v", mem)
+	// An allow-memory twin is written alongside the rule so the pair can be
+	// revoked together (vibe-trial B12: rules and memory used to diverge).
+	if mem, _ := store.GetApprovalMemory(context.Background(), AgentKindCodex, "apply_patch", "*"); mem == nil || mem.Decision != "allow" {
+		t.Fatalf("allow memory should exist next to the rule: %+v", mem)
 	}
 
 	// Codex shell commands classify through the same pipeline.

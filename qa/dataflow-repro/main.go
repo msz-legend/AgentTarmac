@@ -1,15 +1,17 @@
 // Fake ACP stdio server for deterministic AgentHub data-flow reproduction.
 //
 // Env:
-//   FAKE_LOG   path to append every frame received from Hub (stdin)
-//   FAKE_MODE  "normal" (responds to session/prompt with a result) |
-//              "hold"   (never responds to session/prompt; keeps stdout open)
+//
+//	FAKE_LOG   path to append every frame received from Hub (stdin)
+//	FAKE_MODE  "normal" (responds to session/prompt with a result) |
+//	           "hold"   (never responds to session/prompt; keeps stdout open)
 //
 // Behaviour: after `initialize` it replies with a result AND sends two
 // unsolicited `session/update` notifications, which is what real opencode /
 // hermes ACP servers do. That is deliberate: it exposes both
-//   P0-A  Hub never sends session/new
-//   P0-B  json.Decoder pre-read buffering starves the later bufio.Scanner
+//
+//	P0-A  Hub never sends session/new
+//	P0-B  json.Decoder pre-read buffering starves the later bufio.Scanner
 package main
 
 import (

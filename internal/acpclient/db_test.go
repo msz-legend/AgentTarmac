@@ -19,6 +19,7 @@ var expectedTables = []string{
 	"migrations",
 	"rules",
 	"tasks",
+	"ui_events",
 }
 
 // testDBPath returns a fresh SQLite file path inside a per-test temp dir.

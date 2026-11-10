@@ -213,11 +213,36 @@ func mapClaude(sink FrameSink, kind, sessionID string, m map[string]any) {
 				})
 			}
 		}
+	case "result":
+		// Final result line: carries the answer text and the token usage.
+		// Mapping it is what makes turns/tokens/final answer survive into
+		// the session row (vibe-trial A8: this line used to be dropped, so
+		// managed runs always reported 0 tokens and no answer).
+		answer, _ := m["result"].(string)
+		usage, _ := m["usage"].(map[string]any)
+		in, _ := usage["input_tokens"].(float64)
+		out, _ := usage["output_tokens"].(float64)
+		isErr, _ := m["is_error"].(bool)
+		params := map[string]any{
+			"sessionId":  sessionID,
+			"content":    answer,
+			"usage":      map[string]int64{"inputTokens": int64(in), "outputTokens": int64(out)},
+			"isComplete": !isErr,
+		}
+		if isErr {
+			params["status"] = "failed"
+			if sub, _ := m["subtype"].(string); sub != "" {
+				params["error"] = "claude result: " + sub
+			}
+		}
+		_ = dispatchTo(sink, kind, "session/update", params)
 	}
 }
 
 // mapCodex maps `codex exec --json` JSONL events (v1: command executions and
-// turn completion).
+// turn completion). agent_message / turn.completed are mapped too — dropping
+// them used to lose the final answer and the token usage entirely
+// (vibe-trial A8).
 func mapCodex(sink FrameSink, kind, sessionID string, m map[string]any) {
 	typ, _ := m["type"].(string)
 	switch {
@@ -234,7 +259,8 @@ func mapCodex(sink FrameSink, kind, sessionID string, m map[string]any) {
 		}
 	case strings.HasSuffix(typ, "item.completed"):
 		if item, _ := m["item"].(map[string]any); item != nil {
-			if it, _ := item["type"].(string); it == "command_execution" {
+			it, _ := item["type"].(string)
+			if it == "command_execution" {
 				id, _ := item["id"].(string)
 				exit, _ := item["exit_code"].(float64)
 				status := "success"
@@ -247,6 +273,29 @@ func mapCodex(sink FrameSink, kind, sessionID string, m map[string]any) {
 					"status": status, "content": out,
 				})
 			}
+			if it == "agent_message" {
+				text, _ := item["text"].(string)
+				if text != "" {
+					_ = dispatchTo(sink, kind, "session/update", map[string]any{
+						"sessionId": sessionID, "content": text,
+					})
+				}
+			}
+		}
+	case typ == "turn.completed":
+		usage, _ := m["usage"].(map[string]any)
+		in, _ := usage["input_tokens"].(float64)
+		out, _ := usage["output_tokens"].(float64)
+		_ = dispatchTo(sink, kind, "session/update", map[string]any{
+			"sessionId": sessionID,
+			"usage":     map[string]int64{"inputTokens": int64(in), "outputTokens": int64(out)},
+		})
+	case typ == "error":
+		msg, _ := m["message"].(string)
+		if msg != "" {
+			_ = dispatchTo(sink, kind, "session/update", map[string]any{
+				"sessionId": sessionID, "error": msg,
+			})
 		}
 	}
 }

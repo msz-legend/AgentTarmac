@@ -88,7 +88,7 @@ func TestExportSession(t *testing.T) {
 	if err := store.ResolvePermissionRequest(ctx, pr.ID, OutcomeApproved, DecisionAllowOnce); err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if err := store.InsertApproval(ctx, &ApprovalRecord{PermissionRequestID: pr.ID, Decision: "allow", DecisionBy: "user"}); err != nil {
+	if err := store.InsertApproval(ctx, &ApprovalRecord{PermissionRequestID: pr.ID, SessionID: "s1", Decision: "allow", DecisionBy: "user"}); err != nil {
 		t.Fatalf("insert approval: %v", err)
 	}
 

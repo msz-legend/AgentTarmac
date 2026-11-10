@@ -3,6 +3,7 @@ package acpclient
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -107,11 +108,16 @@ func (s *Store) ListSessions(ctx context.Context) ([]*Session, error) {
 // counters, error) and bumps updated_at.
 func (s *Store) UpdateSession(ctx context.Context, sess *Session) error {
 	sess.UpdatedAt = time.Now().Unix()
+	// Persist the identity columns too (vibe-trial B1: cwd/agent_kind/
+	// origin/parent_session_id used to survive only in memory, so a retry's
+	// reset and a continue's lineage never reached the row).
 	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET
 		status = ?, turns = ?, input_tokens = ?, output_tokens = ?, last_error = ?,
-		is_terminal = ?, is_closed = ?, title = ?, updated_at = ? WHERE id = ?`,
+		is_terminal = ?, is_closed = ?, title = ?, cwd = ?, agent_kind = ?, origin = ?,
+		parent_session_id = ?, updated_at = ? WHERE id = ?`,
 		sess.Status, sess.Turns, sess.InputTokens, sess.OutputTokens, sess.LastError,
-		sess.IsTerminal, sess.IsClosed, sess.Title, sess.UpdatedAt, sess.ID)
+		sess.IsTerminal, sess.IsClosed, sess.Title, sess.CWD, sess.AgentKind, sess.Origin,
+		sess.ParentSessionID, sess.UpdatedAt, sess.ID)
 	return wrapErr("update session", err)
 }
 
@@ -197,6 +203,19 @@ func (s *Store) GetToolCallByAgentID(ctx context.Context, sessionID, agentToolCa
 	row := s.db.QueryRowContext(ctx, `SELECT id, session_id, agent_tool_call_id, tool_name, tool_kind,
 		tool_status, risk, tool_content, raw_input, raw_output, created_at, completed_at
 		FROM tool_calls WHERE session_id = ? AND agent_tool_call_id = ?`, sessionID, agentToolCallID)
+	tc, err := scanToolCall(row)
+	if err != nil {
+		return nil, wrapErr("get tool call", err)
+	}
+	return tc, nil
+}
+
+// GetToolCall looks up one tool call by its DB id (late-verdict guard,
+// vibe-trial A9).
+func (s *Store) GetToolCall(ctx context.Context, id int64) (*ToolCall, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, session_id, agent_tool_call_id, tool_name, tool_kind,
+		tool_status, risk, tool_content, raw_input, raw_output, created_at, completed_at
+		FROM tool_calls WHERE id = ?`, id)
 	tc, err := scanToolCall(row)
 	if err != nil {
 		return nil, wrapErr("get tool call", err)
@@ -387,8 +406,8 @@ func (s *Store) InsertApproval(ctx context.Context, ah *ApprovalRecord) error {
 		ah.DecidedAt = time.Now().Unix()
 	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO approval_history
-		(permission_request_id, decision, decided_at, decision_by, notes) VALUES (?, ?, ?, ?, ?)`,
-		nullIfZero(ah.PermissionRequestID), ah.Decision, ah.DecidedAt, ah.DecisionBy, nullIfEmpty(ah.Notes))
+		(permission_request_id, session_id, decision, decided_at, decision_by, notes) VALUES (?, ?, ?, ?, ?, ?)`,
+		nullIfZero(ah.PermissionRequestID), ah.SessionID, ah.Decision, ah.DecidedAt, ah.DecisionBy, nullIfEmpty(ah.Notes))
 	if err != nil {
 		return wrapErr("insert approval", err)
 	}
@@ -495,11 +514,42 @@ func (s *Store) DeleteApprovalMemory(ctx context.Context, id int64) error {
 	return nil
 }
 
+// DeleteApprovalMemoryByKey removes the memory row matching a rule's key,
+// so removing an always-rule also revokes its memory twin (vibe-trial B12).
+func (s *Store) DeleteApprovalMemoryByKey(ctx context.Context, agentKind, tool, pattern string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM approval_memory WHERE agent_kind = ? AND tool = ? AND command_pattern = ?`,
+		agentKind, tool, pattern)
+	return wrapErr("delete approval memory by key", err)
+}
+
 // PurgeSessionsBefore deletes sessions last updated before the given unix
 // time (decision G: 90-day retention). Foreign-key cascades clear the
 // session's tool calls, permission requests, approvals and notifications;
-// approval memory is global and survives.
+// approval memory is global and survives. The session's task rows and
+// session-scoped rules go with it (vibe-trial B2: they used to outlive the
+// session as orphan rows the console could no longer attribute).
 func (s *Store) PurgeSessionsBefore(ctx context.Context, beforeUnix int64) (int64, error) {
+	var ids []string
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM sessions WHERE updated_at < ?`, beforeUnix)
+	if err != nil {
+		return 0, wrapErr("purge sessions", err)
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM tasks WHERE session_id = ?`, id); err != nil {
+			return 0, wrapErr("purge session tasks", err)
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM rules WHERE scope = 'session' AND session_id = ?`, id); err != nil {
+			return 0, wrapErr("purge session rules", err)
+		}
+	}
 	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE updated_at < ?`, beforeUnix)
 	if err != nil {
 		return 0, wrapErr("purge sessions", err)
@@ -613,9 +663,12 @@ func (s *Store) ExportSession(ctx context.Context, id string) (*SessionExport, e
 			sessionReqs = append(sessionReqs, pr)
 		}
 	}
+	// Filter by the session_id column (migration 0007): system verdicts
+	// carry permission_request_id IS NULL and the old INNER JOIN dropped
+	// them from the archive entirely (vibe-trial B3).
 	rows, err := s.db.QueryContext(ctx, `SELECT ah.id, ah.permission_request_id, ah.decision, ah.decided_at, ah.decision_by, ah.notes
-		FROM approval_history ah JOIN permission_requests pr ON ah.permission_request_id = pr.id
-		WHERE pr.session_id = ? ORDER BY ah.id`, id)
+		FROM approval_history ah WHERE ah.session_id = ?
+		ORDER BY ah.id`, id)
 	if err != nil {
 		return nil, wrapErr("export session", err)
 	}
@@ -635,13 +688,89 @@ func (s *Store) ExportSession(ctx context.Context, id string) (*SessionExport, e
 	if err := rows.Err(); err != nil {
 		return nil, wrapErr("export session", err)
 	}
+	// Archive completeness (vibe-trial B4): the bundle used to carry only
+	// session/toolCalls/permissionRequests/approvals, losing the dispatch
+	// task, its rules and the persisted event stream.
+	var sessionTasks []*Task
+	if tasks, err := s.ListTasks(ctx, ""); err == nil {
+		for _, tk := range tasks {
+			if tk.SessionID == id {
+				sessionTasks = append(sessionTasks, tk)
+			}
+		}
+	}
+	allRules, _ := s.ListRules(ctx)
+	var sessionRules []rules.Rule
+	for _, r := range allRules {
+		if r.SessionID == id {
+			sessionRules = append(sessionRules, r)
+		}
+	}
+	events, _ := s.ListUIEvents(ctx, 500, id)
 	return &SessionExport{
 		Session:            sess,
 		ToolCalls:          calls,
 		PermissionRequests: sessionReqs,
 		Approvals:          approvals,
+		Tasks:              sessionTasks,
+		Rules:              sessionRules,
+		Events:             events,
 		ExportedAt:         time.Now().Unix(),
 	}, nil
+}
+
+// InsertUIEvent persists one console event (vibe-trial B5).
+func (s *Store) InsertUIEvent(ctx context.Context, e *UIEventRecord) error {
+	e.Ts = time.Now().Unix()
+	res, err := s.db.ExecContext(ctx, `INSERT INTO ui_events (ts, type, agent_kind, session_id, payload)
+		VALUES (?, ?, ?, ?, ?)`, e.Ts, e.Type, e.AgentKind, e.SessionID, string(e.Payload))
+	if err != nil {
+		return wrapErr("insert ui event", err)
+	}
+	if id, err := res.LastInsertId(); err == nil {
+		e.ID = id
+	}
+	return nil
+}
+
+// ListUIEvents returns the newest persisted console events, newest first
+// (vibe-trial B5: /api/events now reads the database, so history survives
+// daemon restarts). Empty sessionID lists across sessions.
+func (s *Store) ListUIEvents(ctx context.Context, limit int, sessionID string) ([]*UIEventRecord, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	q := `SELECT id, ts, type, agent_kind, session_id, payload FROM ui_events`
+	args := []any{}
+	if sessionID != "" {
+		q += ` WHERE session_id = ?`
+		args = append(args, sessionID)
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, wrapErr("list ui events", err)
+	}
+	defer rows.Close()
+	var out []*UIEventRecord
+	for rows.Next() {
+		var e UIEventRecord
+		var payload string
+		if err := rows.Scan(&e.ID, &e.Ts, &e.Type, &e.AgentKind, &e.SessionID, &payload); err != nil {
+			return nil, wrapErr("list ui events", err)
+		}
+		e.Payload = json.RawMessage(payload)
+		out = append(out, &e)
+	}
+	return out, rows.Err()
+}
+
+// PurgeUIEventsBefore deletes console events older than the given unix time
+// (same retention policy as sessions, vibe-trial B5).
+func (s *Store) PurgeUIEventsBefore(ctx context.Context, beforeUnix int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM ui_events WHERE ts < ?`, beforeUnix)
+	return wrapErr("purge ui events", err)
 }
 
 func nullIfZero(v int64) any {
@@ -718,7 +847,7 @@ func (s *Store) ListTasks(ctx context.Context, state string) ([]*Task, error) {
 func (s *Store) QueuedTasks(ctx context.Context) ([]*Task, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, agent_kind, cwd, prompt, state, session_id,
 		retries, max_retries, error, created_at, started_at, finished_at
-		FROM tasks WHERE state = ? ORDER BY created_at, id`, TaskQueued)
+		FROM tasks WHERE state = ? ORDER BY created_at, rowid`, TaskQueued)
 	if err != nil {
 		return nil, wrapErr("queued tasks", err)
 	}

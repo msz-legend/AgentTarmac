@@ -47,6 +47,7 @@ func main() {
 		wecomAibotChatType = flag.Int("wecom-aibot-chat-type", 1, "WeCom AI bot chat type: 1=single, 2=group, 0=omit (default: $AGENTHUB_WECOM_AIBOT_CHAT_TYPE)")
 		wecomAibotWSURL    = flag.String("wecom-aibot-ws-url", "", "override WeCom AI bot WS endpoint (tests/private deployment; default: $AGENTHUB_WECOM_AIBOT_WS_URL)")
 		taskConc           = flag.Int("task-concurrency", 2, "max concurrently running managed tasks (PRD F6)")
+		taskTimeoutMin     = flag.Int("task-timeout-minutes", 60, "hard cap per managed task run; 0 disables (vibe-trial A1)")
 		relayURL           = flag.String("relay", "", "self-hosted relay URL (wss://host/relay/hub/<id>?token=…; PRD D8, default off)")
 		feishuWebhook      = flag.String("feishu-webhook", "", "Feishu custom-bot webhook URL (default: $AGENTHUB_FEISHU_WEBHOOK)")
 		feishuSecret       = flag.String("feishu-secret", "", "Feishu custom-bot sign secret (default: $AGENTHUB_FEISHU_SECRET)")
@@ -93,6 +94,11 @@ func main() {
 	// Code runs carry a settings file routing PreToolUse through hub-hook so
 	// approvals land in the same inbox.
 	queue := tasks.New(store, bridge, runnerSink{bridge: bridge}, resolveHookCommand(*hookPath), *taskConc)
+	// Pause persistence (vibe-trial B11) + per-run watchdog (vibe-trial A1).
+	queue.SetStatePath(filepath.Join(*data, "queue_state.json"))
+	if *taskTimeoutMin > 0 {
+		queue.SetTaskTimeout(time.Duration(*taskTimeoutMin) * time.Minute)
+	}
 	srv.SetTasks(queue)
 
 	// ACP-managed tasks (opencode `acp` / hermes-acp) route every

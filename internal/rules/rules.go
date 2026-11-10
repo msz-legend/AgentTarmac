@@ -91,18 +91,24 @@ func (e *Engine) Remove(id string) bool {
 // Specificity: exact tool beats "*"; a matched arg pattern beats a bare tool.
 // Session-scoped rules are filtered out unless SessionID equals their own.
 func (e *Engine) Match(tool, arg, sessionID string) (Rule, error) {
-	return MatchFirst(e.List(), tool, arg, sessionID)
+	return MatchFirst(e.List(), "", tool, arg, sessionID)
 }
 
 // MatchFirst applies the most-specific-wins matching over an arbitrary rule
 // slice (the store-backed path uses this to match fresh rows every gate).
-func MatchFirst(rs []Rule, tool, arg, sessionID string) (Rule, error) {
+// agentKind filters rules minted for another agent kind (vibe-trial B13:
+// matching used to ignore kind, leaking opencode grants to claude_code);
+// rules without a kind (legacy rows) apply to every kind.
+func MatchFirst(rs []Rule, agentKind, tool, arg, sessionID string) (Rule, error) {
 	best := -1
 	var out Rule
 	found := false
 
 	for _, r := range rs {
 		if r.Effect != EffectAllow {
+			continue
+		}
+		if r.AgentKind != "" && agentKind != "" && r.AgentKind != agentKind {
 			continue
 		}
 		if r.Scope == "session" && r.SessionID != sessionID {

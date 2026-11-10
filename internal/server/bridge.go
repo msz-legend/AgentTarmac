@@ -158,6 +158,30 @@ func (b *Bridge) recordUIEvent(e UIEvent) {
 		b.uiEvents = b.uiEvents[len(b.uiEvents)-uiEventRingCap:]
 	}
 	b.evMu.Unlock()
+
+	// Persist (vibe-trial B5: the ring used to evaporate on restart,
+	// severing the event stream from the session archive).
+	if b.store != nil {
+		raw, err := json.Marshal(map[string]any{"payload": e.Payload})
+		if err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = b.store.InsertUIEvent(ctx, &acpclient.UIEventRecord{
+				Type:      e.Type,
+				AgentKind: agentKindOf(e.Agent),
+				SessionID: e.SessionID,
+				Payload:   raw,
+			})
+			cancel()
+		}
+	}
+}
+
+// agentKindOf flattens the event agent block for persistence.
+func agentKindOf(a *UIEventAgent) string {
+	if a == nil {
+		return ""
+	}
+	return a.Kind
 }
 
 // UIEvents returns a copy of the event ring, oldest first.
@@ -205,6 +229,8 @@ func mapUIState(status string, isComplete bool) string {
 		return "running"
 	case "awaiting_approval":
 		return "waiting_approval"
+	case "completed": // vibe-trial B14: used to fall through to idle
+		return "finished"
 	case "failed":
 		return "failed"
 	case "closed":
@@ -281,7 +307,8 @@ func (b *Bridge) recordPermissionResolved(agentKind string, res acpclient.Permis
 		outcome = "allowed_once"
 	}
 	b.recordUIEvent(UIEvent{Type: "permission_resolved",
-		Agent: agentRef(agentKind),
+		Agent:     agentRef(agentKind),
+		SessionID: b.sessionForRequest(res.RequestID),
 		Payload: map[string]any{
 			"request_id": res.RequestID,
 			"outcome":    outcome,
@@ -290,6 +317,20 @@ func (b *Bridge) recordPermissionResolved(agentKind string, res acpclient.Permis
 			"decision":   res.Decision,
 			"note":       res.Note,
 		}})
+}
+
+// sessionForRequest resolves the session behind a permission request uid
+// (vibe-trial P1-10: resolved events used to lose the session link).
+func (b *Bridge) sessionForRequest(requestUID string) string {
+	if b.store == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if pr, err := b.store.GetPermissionRequestByUID(ctx, requestUID); err == nil {
+		return pr.SessionID
+	}
+	return ""
 }
 
 // NewBridge creates an empty bridge.

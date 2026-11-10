@@ -299,7 +299,8 @@ func (a *BaseAdapter) IntakeToolCall(ctx context.Context, in HookIntake, deadlin
 		dec := TimedOutDecision()
 		_ = a.store.ResolvePermissionRequest(context.Background(), a.pendingDBID(gate.RequestID), OutcomeRejected, "")
 		_ = a.store.InsertApproval(context.Background(), &ApprovalRecord{
-			Decision: "deny", DecisionBy: DecidedByTimeout,
+			SessionID: in.SessionID,
+			Decision:  "deny", DecisionBy: DecidedByTimeout,
 			Notes: "hook intake timed out after " + deadline.String(),
 		})
 		return dec, gate.RequestID, nil
@@ -647,8 +648,11 @@ func mainArg(toolName string, rawInput json.RawMessage) string {
 // gateToolCallLocked applies the approval gate to a freshly recorded tool
 // call (PRD F3 / decision D16 order):
 //
-//  1. high risk            → always intercepted, never auto-approved (决策C)
-//  2. policy rule hit      → auto-allow, decided_by=policy (四选项②③)
+//  1. policy rule hit      → auto-allow, decided_by=policy (四选项②③) —
+//     checked BEFORE the high-risk intercept because the verdict UI offers
+//     放行 Always on high-risk cards; a rule minted from such a verdict must
+//     actually fire, or the promise is false (vibe-trial A7).
+//  2. high risk            → intercepted, pending human approval (决策C)
 //  3. deny memory          → auto-reject (reject_always verdicts; allow-deny
 //     rules arrive with the M2 escalation)
 //  4. legacy allow memory  → auto-allow (pre-rule-engine verdicts)
@@ -657,27 +661,28 @@ func mainArg(toolName string, rawInput json.RawMessage) string {
 //
 // Callers must hold a.mu.
 func (a *BaseAdapter) gateToolCallLocked(ctx context.Context, state *sessionState, tc *ToolCall, risk RiskLevel, pattern, mainArgument string) gateOutcome {
-	// 1. High-risk operations are always intercepted (decision C).
-	if risk == RiskHigh {
-		uid, err := a.raisePermissionLocked(ctx, state, tc, risk, pattern, "高危操作，需要人工审批")
-		if err != nil {
-			return gateOutcome{Outcome: "gate_error", Reason: err.Error()}
-		}
-		return gateOutcome{Outcome: "pending_approval", RequestID: uid, Reason: "high-risk operation intercepted"}
-	}
-
-	// 2. Policy rules from earlier ②/③ verdicts (decided_by=policy, PRD F3).
+	// 1. Policy rules from earlier ②/③ verdicts (decided_by=policy, PRD F3).
 	stored, err := a.store.ListRules(ctx)
 	if err != nil {
 		return gateOutcome{Outcome: "gate_error", Reason: err.Error()}
 	}
-	if rule, matched := rules.MatchFirst(stored, tc.ToolName, mainArgument, tc.SessionID); matched == nil {
+	if rule, matched := rules.MatchFirst(stored, a.kind, tc.ToolName, mainArgument, tc.SessionID); matched == nil {
 		tc.ToolStatus = ToolApproved
 		return gateOutcome{
 			Outcome:  "policy_allowed",
 			Reason:   "matched rule " + rule.ID,
 			Decision: Decision{Outcome: OutcomeAllowedOnce, RuleScope: rule.Scope, DecidedBy: DecidedByPolicy, Note: "matched rule " + rule.ID},
 		}
+	}
+
+	// 2. High-risk operations are intercepted (decision C) unless a rule
+	// above already allowed them.
+	if risk == RiskHigh {
+		uid, err := a.raisePermissionLocked(ctx, state, tc, risk, pattern, "高危操作，需要人工审批")
+		if err != nil {
+			return gateOutcome{Outcome: "gate_error", Reason: err.Error()}
+		}
+		return gateOutcome{Outcome: "pending_approval", RequestID: uid, Reason: "high-risk operation intercepted"}
 	}
 
 	// 3. Persistent deny memory (reject_always verdicts, decision B).
@@ -936,6 +941,7 @@ func (a *BaseAdapter) raiseAgentPermissionLocked(ctx context.Context, state *ses
 func (a *BaseAdapter) recordGateAuditLocked(ctx context.Context, tc *ToolCall, pattern, decision, decisionBy, reason string) error {
 	return a.store.InsertApproval(ctx, &ApprovalRecord{
 		PermissionRequestID: 0, // no permission_requests row for system decisions
+		SessionID:           tc.SessionID,
 		Decision:            decision,
 		DecisionBy:          decisionBy,
 		Notes: fmt.Sprintf("tool=%s toolCallId=%s pattern=%q risk=%s reason=%s",
@@ -1014,6 +1020,7 @@ func (a *BaseAdapter) resolvePendingLocked(ctx context.Context, p *pendingPermis
 	}
 	if err := a.store.InsertApproval(ctx, &ApprovalRecord{
 		PermissionRequestID: p.DBID,
+		SessionID:           p.SessionID,
 		Decision:            allowVerb(allow),
 		DecisionBy:          decidedBy,
 		Notes:               notes,
@@ -1021,20 +1028,26 @@ func (a *BaseAdapter) resolvePendingLocked(ctx context.Context, p *pendingPermis
 		return PermissionResolution{}, err
 	}
 
-	// Tool call lifecycle follows the verdict.
+	// Tool call lifecycle follows the verdict — but a call that already
+	// reached a terminal state is never downgraded by a late verdict
+	// (vibe-trial A9: a decision arriving after the tool result used to
+	// flip a completed call back to approved).
 	tcStatus := ToolRejected
 	if allow {
 		tcStatus = ToolApproved
 	}
 	state := a.sessions[p.SessionID]
 	if p.ToolCallDBID != 0 {
-		if err := a.store.UpdateToolCallStatus(ctx, p.ToolCallDBID, tcStatus); err != nil {
+		if cur, gerr := a.store.GetToolCall(ctx, p.ToolCallDBID); gerr == nil && isTerminalToolStatus(cur.ToolStatus) {
+			// Keep the recorded outcome; the verdict is already captured in
+			// permission_requests + approvals below.
+		} else if err := a.store.UpdateToolCallStatus(ctx, p.ToolCallDBID, tcStatus); err != nil {
 			return PermissionResolution{}, err
 		}
 	}
 	// Keep the in-memory projection in sync with the DB row.
 	if state != nil && p.ToolCallAgentID != "" {
-		if tc, ok := state.toolCalls[p.ToolCallAgentID]; ok {
+		if tc, ok := state.toolCalls[p.ToolCallAgentID]; ok && !isTerminalToolStatus(tc.ToolStatus) {
 			tc.ToolStatus = tcStatus
 		}
 	}
@@ -1059,6 +1072,13 @@ func (a *BaseAdapter) resolvePendingLocked(ctx context.Context, p *pendingPermis
 		}
 		if err := a.store.AddRule(ctx, rule); err != nil {
 			return PermissionResolution{}, err
+		}
+		// Keep approval_memory in step with always-scoped rules so the pair
+		// can be revoked together (vibe-trial B12: rules and memory used to
+		// diverge silently). Session-scoped grants stay rules-only — memory
+		// has no session dimension and would leak the grant globally.
+		if decision == DecisionAllowAlways {
+			_ = a.writeAllowMemoryLocked(ctx, p)
 		}
 	} else {
 		if err := a.writeMemoryIfNeededLocked(ctx, p, decision, allow); err != nil {
@@ -1117,6 +1137,33 @@ func (a *BaseAdapter) resolvePendingLocked(ctx context.Context, p *pendingPermis
 		Decision:  decision,
 		Note:      notes,
 	}, nil
+}
+
+// isTerminalToolStatus reports whether a tool call has reached a final
+// outcome that a late verdict must not overwrite (vibe-trial A9).
+func isTerminalToolStatus(s string) bool {
+	return s == ToolCompleted || s == ToolFailed || s == ToolRejected
+}
+
+// writeAllowMemoryLocked upserts an allow row into approval_memory for an
+// always-scoped rule (vibe-trial B12: rules and memory now move together).
+func (a *BaseAdapter) writeAllowMemoryLocked(ctx context.Context, p *pendingPermission) error {
+	mem, err := a.store.GetApprovalMemory(ctx, a.kind, p.ToolName, p.Pattern)
+	if err != nil {
+		return err
+	}
+	confirmCount := 2 // first click + second confirmation
+	if mem != nil {
+		confirmCount = mem.ConfirmCount + 1
+	}
+	return a.store.UpsertApprovalMemory(ctx, &ApprovalMemory{
+		AgentKind:      a.kind,
+		Tool:           p.ToolName,
+		CommandPattern: p.Pattern,
+		Decision:       "allow",
+		Scope:          "always",
+		ConfirmCount:   confirmCount,
+	})
 }
 
 // writeMemoryIfNeededLocked persists a reject_always verdict into approval

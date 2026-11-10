@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -567,7 +569,39 @@ func (s *Server) handleNotifications(w http.ResponseWriter, r *http.Request) {
 
 var upgrader = websocket.Upgrader{
 	// Local-only daemon; token auth is the real boundary.
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: sameOriginOK, // vibe-trial C1: was `return true` (any Origin)
+}
+
+// sameOriginOK is the one WS origin policy for every upgrader (vibe-trial
+// C1/C2): browser origins must match the served host verbatim; extra
+// origins come from AGENTHUB_WS_ALLOW_ORIGINS (comma separated, host[:port]
+// form). Clients without an Origin header (curl, connector, hub-hook) are
+// not cross-site by construction and pass.
+func sameOriginOK(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	for _, extra := range strings.Split(os.Getenv("AGENTHUB_WS_ALLOW_ORIGINS"), ",") {
+		host := strings.TrimSpace(extra)
+		if host == "" {
+			continue
+		}
+		if ex, err := url.Parse(host); err == nil && ex.Host != "" {
+			host = ex.Host // allow scheme-ful entries
+		}
+		if strings.EqualFold(u.Host, host) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleWS streams bridge events (frame.in / frame.out / permission.resolved)
@@ -654,8 +688,15 @@ func bearerToken(r *http.Request) string {
 		}
 		return ""
 	}
+	// Query-token fallback is for WS clients only (browsers cannot set
+	// headers on WebSocket). On any other endpoint the token must stay in
+	// the Authorization header, out of URLs/logs/Referer (vibe-trial C3).
 	if q := r.URL.Query().Get("token"); q != "" {
-		return q
+		pt := r.URL.Path
+		if pt == "/ws" || strings.HasSuffix(pt, "/terminal-ws") {
+			return q
+		}
+		return ""
 	}
 	return ""
 }

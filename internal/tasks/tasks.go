@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/agenttarmac/agenttarmac/internal/acpclient"
@@ -54,6 +55,7 @@ type Queue struct {
 	hookCommand       string // hub-hook command for managed CC approvals
 	permissionDecider func(ctx context.Context, kind string, in acpclient.HookIntake) (acpclient.Decision, string, error)
 	concurrency       int
+	taskTimeout       time.Duration // hard cap per managed run (0 = no cap)
 
 	mu      sync.Mutex
 	paused  bool
@@ -61,6 +63,8 @@ type Queue struct {
 	cancels map[string]context.CancelFunc
 	wakeCh  chan struct{}
 	wg      sync.WaitGroup
+
+	statePath string // optional queue-state file (pause persistence, B11)
 
 	spawner func(ctx context.Context, t *acpclient.Task, sessionID string) (*exec.Cmd, string, error)
 }
@@ -80,6 +84,7 @@ func New(store Store, sink EventSink, frames FrameDispatch, hookCommand string, 
 		cancels:     map[string]context.CancelFunc{},
 		wakeCh:      make(chan struct{}, 1),
 	}
+	q.loadPaused()
 	go q.loop()
 	// Recover: tasks left "running" by a daemon restart are marked failed
 	// (their processes died with the daemon).
@@ -88,7 +93,59 @@ func New(store Store, sink EventSink, frames FrameDispatch, hookCommand string, 
 	return q
 }
 
-// recoverOrphans fails tasks that were running when the daemon died.
+// loadPaused restores the persisted pause flag (vibe-trial B11: a daemon
+// restart used to silently un-pause the queue and fire held-back tasks).
+func (q *Queue) loadPaused() {
+	if q.statePath == "" {
+		return
+	}
+	raw, err := os.ReadFile(q.statePath)
+	if err != nil {
+		return
+	}
+	var st struct {
+		Paused bool `json:"paused"`
+	}
+	if json.Unmarshal(raw, &st) == nil && st.Paused {
+		q.mu.Lock()
+		q.paused = true
+		q.mu.Unlock()
+	}
+}
+
+// savePaused persists the pause flag; best-effort (a failed write only
+// means the flag is not restored across restarts).
+func (q *Queue) savePaused() {
+	if q.statePath == "" {
+		return
+	}
+	st := struct {
+		Paused bool `json:"paused"`
+	}{Paused: q.Paused()}
+	if raw, err := json.Marshal(st); err == nil {
+		_ = os.WriteFile(q.statePath, raw, 0o600)
+	}
+}
+
+// SetStatePath enables pause persistence across daemon restarts (B11).
+// Call right after New; empty (default) keeps the flag in-memory only.
+func (q *Queue) SetStatePath(path string) {
+	q.mu.Lock()
+	q.statePath = path
+	q.mu.Unlock()
+	q.loadPaused()
+}
+
+// SetTaskTimeout sets the hard per-run cap (vibe-trial A1 companion: a hung
+// agent must not pin a concurrency slot forever). 0 disables the cap.
+func (q *Queue) SetTaskTimeout(d time.Duration) {
+	q.taskTimeout = d
+}
+
+// recoverOrphans fails tasks that were running when the daemon died, and
+// settles their session rows to a terminal state (vibe-trial A6: sessions
+// used to stay "active" forever after a restart). It also sweeps temp
+// settings files leaked by crashed runs (S7).
 func (q *Queue) recoverOrphans() {
 	ctx := context.Background()
 	running, err := q.store.ListTasks(ctx, acpclient.TaskRunning)
@@ -100,8 +157,75 @@ func (q *Queue) recoverOrphans() {
 		t.Error = "daemon restart during run"
 		t.FinishedAt = time.Now().Unix()
 		_ = q.store.UpdateTask(ctx, t)
+		if t.SessionID != "" {
+			q.settleSession(ctx, t.SessionID, acpclient.StatusFailed, t.Error, 0)
+		}
 		q.emit(t, "failed")
 	}
+	sweepStaleSettings()
+}
+
+// sweepStaleSettings deletes agenthub-task-*-settings.json files older than
+// a day from the temp dir (crashed runs never cleaned them up, S7).
+func sweepStaleSettings() {
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "agenthub-task-*-settings.json"))
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-24 * time.Hour)
+	for _, m := range matches {
+		if st, err := os.Stat(m); err == nil && st.ModTime().Before(cutoff) {
+			_ = os.Remove(m)
+		}
+	}
+}
+
+// settleSession writes a terminal state onto the task's session row
+// (vibe-trial A4: task endings used to never reach the session row, leaving
+// every managed session "active" with zero turns). status is one of the
+// acpclient Status* constants; turnsDelta increments the turn count.
+// A terminal session/update frame is dispatched as well, so the existing
+// notification plumbing (feishu/wecom/web-push on failed, vibe-trial B7)
+// and the console event stream see the ending.
+func (q *Queue) settleSession(ctx context.Context, sessionID, status, lastErr string, turnsDelta int) {
+	if sessionID == "" {
+		return
+	}
+	sess, err := q.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return
+	}
+	// Terminal frame for the event stream + notification plumbing (B7).
+	// Skipped when the row already reached this exact terminal state —
+	// claude_code runs set completed via the result-line mapping before the
+	// queue unwinds, and a repeat frame would bounce off the adapter's
+	// transition state machine as an error event.
+	already := sess.IsTerminal && sess.Status == status
+	if !already {
+		if raw, err := json.Marshal(map[string]any{
+			"sessionId": sessionID, "status": status, "error": lastErr,
+		}); err == nil {
+			kind := sess.AgentKind
+			if kind == "" {
+				kind = acpclient.AgentKindClaudeCode
+			}
+			_ = q.Dispatch(kind, "session/update", raw)
+		}
+	}
+	if status != "" {
+		sess.Status = status
+	}
+	if lastErr != "" {
+		sess.LastError = truncate(lastErr, 500)
+	}
+	if turnsDelta > 0 {
+		sess.Turns += turnsDelta
+	}
+	sess.IsTerminal = true
+	if status == acpclient.StatusClosed {
+		sess.IsClosed = true
+	}
+	_ = q.store.UpdateSession(ctx, sess)
 }
 
 func (q *Queue) wake() {
@@ -136,7 +260,14 @@ func (q *Queue) loop() {
 	}
 }
 
+// maxPromptLen caps the dispatch prompt (vibe-trial B9: unbounded prompts
+// could be queued and only fail at spawn time).
+const maxPromptLen = 64 * 1024
+
 // Enqueue adds a task (PRD D13: 派发) and wakes the dispatcher.
+// Fail-fast validation (vibe-trial B9): cwd must exist, the agent binary
+// must be resolvable, and an identical queued/running task is returned
+// as-is instead of being duplicated.
 func (q *Queue) Enqueue(ctx context.Context, agentKind, cwd, prompt string) (*acpclient.Task, error) {
 	if agentKind != acpclient.AgentKindClaudeCode && agentKind != acpclient.AgentKindCodex &&
 		agentKind != acpclient.AgentKindOpenCode && agentKind != acpclient.AgentKindHermes {
@@ -144,6 +275,18 @@ func (q *Queue) Enqueue(ctx context.Context, agentKind, cwd, prompt string) (*ac
 	}
 	if strings.TrimSpace(cwd) == "" || strings.TrimSpace(prompt) == "" {
 		return nil, fmt.Errorf("tasks: cwd and prompt are required")
+	}
+	if len(prompt) > maxPromptLen {
+		return nil, fmt.Errorf("tasks: prompt exceeds %d bytes", maxPromptLen)
+	}
+	if st, err := os.Stat(cwd); err != nil || !st.IsDir() {
+		return nil, fmt.Errorf("tasks: cwd %q is not an accessible directory", cwd)
+	}
+	if _, err := resolveAgentBinary(agentKind); err != nil {
+		return nil, err
+	}
+	if dup := q.findDuplicate(ctx, agentKind, cwd, prompt); dup != nil {
+		return dup, nil
 	}
 	t := &acpclient.Task{
 		ID:        "task_" + newHex8(),
@@ -160,14 +303,33 @@ func (q *Queue) Enqueue(ctx context.Context, agentKind, cwd, prompt string) (*ac
 	return t, nil
 }
 
-// Retry requeues a failed task (PRD D13: 失败重试；自动重试发生在 run 尾部).
+// findDuplicate returns an existing queued/running task with the same
+// agent+cwd+prompt (lightweight idempotency for double-clicks and retries
+// of the same request, vibe-trial B9).
+func (q *Queue) findDuplicate(ctx context.Context, agentKind, cwd, prompt string) *acpclient.Task {
+	for _, state := range []string{acpclient.TaskQueued, acpclient.TaskRunning} {
+		list, err := q.store.ListTasks(ctx, state)
+		if err != nil {
+			return nil
+		}
+		for _, t := range list {
+			if t.AgentKind == agentKind && t.CWD == cwd && t.Prompt == prompt {
+				return t
+			}
+		}
+	}
+	return nil
+}
+
+// Retry requeues a failed or cancelled task (PRD D13: 失败重试；自动重试
+// 发生在 run 尾部。vibe-trial B10: cancelled tasks used to be unrecoverable).
 func (q *Queue) Retry(ctx context.Context, id string) (*acpclient.Task, error) {
 	t, err := q.store.GetTask(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if t.State != acpclient.TaskFailed {
-		return nil, fmt.Errorf("tasks: only failed tasks can be retried (state %s)", t.State)
+	if t.State != acpclient.TaskFailed && t.State != acpclient.TaskCancelled {
+		return nil, fmt.Errorf("tasks: only failed or cancelled tasks can be retried (state %s)", t.State)
 	}
 	t.State = acpclient.TaskQueued
 	t.Error = ""
@@ -180,6 +342,10 @@ func (q *Queue) Retry(ctx context.Context, id string) (*acpclient.Task, error) {
 }
 
 // Cancel stops a queued or running task (PRD D13: 可暂停续跑中的取消面).
+// The cancelled state is persisted BEFORE the run goroutine is woken
+// (vibe-trial A5: the old order let the goroutine unwind into fail(),
+// auto-requeueing a task the user had just cancelled, and erasing the
+// cancellation from the record).
 func (q *Queue) Cancel(ctx context.Context, id string) (*acpclient.Task, error) {
 	t, err := q.store.GetTask(ctx, id)
 	if err != nil {
@@ -195,12 +361,20 @@ func (q *Queue) Cancel(ctx context.Context, id string) (*acpclient.Task, error) 
 		q.emit(t, "cancelled")
 		q.wake()
 	case acpclient.TaskRunning:
+		t.State = acpclient.TaskCancelled
+		t.Error = "cancelled by user"
+		t.FinishedAt = time.Now().Unix()
+		if err := q.store.UpdateTask(ctx, t); err != nil {
+			return nil, err
+		}
 		q.mu.Lock()
 		cancel := q.cancels[id]
 		q.mu.Unlock()
 		if cancel != nil {
-			cancel() // the run goroutine marks the task cancelled
+			cancel() // the run goroutine observes the persisted state on unwind
 		}
+		q.emit(t, "cancelled")
+		q.settleSession(ctx, t.SessionID, acpclient.StatusClosed, "cancelled by user", 0)
 	default:
 		return nil, fmt.Errorf("tasks: task %s is %s, cannot cancel", id, t.State)
 	}
@@ -208,11 +382,13 @@ func (q *Queue) Cancel(ctx context.Context, id string) (*acpclient.Task, error) 
 }
 
 // Pause stops dispatching queued tasks (running ones keep going; 续跑 on
-// resume).
+// resume). The flag persists across daemon restarts when a state path is
+// configured (vibe-trial B11).
 func (q *Queue) Pause() {
 	q.mu.Lock()
 	q.paused = true
 	q.mu.Unlock()
+	q.savePaused()
 }
 
 // Resume re-enables dispatching.
@@ -220,6 +396,7 @@ func (q *Queue) Resume() {
 	q.mu.Lock()
 	q.paused = false
 	q.mu.Unlock()
+	q.savePaused()
 	q.wake()
 }
 
@@ -290,7 +467,21 @@ func (q *Queue) tryStart(ctx context.Context, t *acpclient.Task) bool {
 	q.wg.Add(1)
 	go func() {
 		defer q.wg.Done()
+		// Hard per-run cap (vibe-trial A1 companion): a hung agent must not
+		// pin a concurrency slot forever. 0 = no cap.
+		var timedOut atomic.Bool
+		var timer *time.Timer
+		if q.taskTimeout > 0 {
+			timer = time.AfterFunc(q.taskTimeout, func() {
+				timedOut.Store(true)
+				_ = cmd.Process.Kill()
+			})
+			defer timer.Stop()
+		}
 		err := q.streamTask(runCtx, t, sessionID, cmd)
+		if err != nil && timedOut.Load() {
+			err = fmt.Errorf("task timeout after %s", q.taskTimeout)
+		}
 		if settingsFile != "" {
 			_ = os.Remove(settingsFile)
 		}
@@ -302,6 +493,8 @@ func (q *Queue) tryStart(ctx context.Context, t *acpclient.Task) bool {
 
 		fresh, _ := q.store.GetTask(ctx, t.ID)
 		if fresh != nil && fresh.State == acpclient.TaskCancelled {
+			// Cancel() already persisted the terminal state; do not let the
+			// unwind downgrade it to failed or requeue it (vibe-trial A5).
 			q.emit(fresh, "cancelled")
 			return
 		}
@@ -317,6 +510,7 @@ func (q *Queue) tryStart(ctx context.Context, t *acpclient.Task) bool {
 		t.State = acpclient.TaskFinished
 		t.FinishedAt = time.Now().Unix()
 		_ = q.store.UpdateTask(ctx, t)
+		q.settleSession(ctx, t.SessionID, acpclient.StatusCompleted, "", 1)
 		q.emit(t, "finished")
 		q.wake()
 	}()
@@ -324,9 +518,15 @@ func (q *Queue) tryStart(ctx context.Context, t *acpclient.Task) bool {
 }
 
 // fail marks a task failed with the auto-retry policy (PRD D13: 失败重试).
+// A task the user already cancelled is never resurrected by an auto-retry
+// (vibe-trial A5), and any terminal failure settles the session row (A4).
 func (q *Queue) fail(ctx context.Context, t *acpclient.Task, msg string) {
 	fresh, _ := q.store.GetTask(ctx, t.ID)
 	if fresh != nil {
+		if fresh.State == acpclient.TaskCancelled {
+			q.emit(fresh, "cancelled")
+			return
+		}
 		t = fresh
 	}
 	t.Error = truncate(msg, 500)
@@ -341,6 +541,7 @@ func (q *Queue) fail(ctx context.Context, t *acpclient.Task, msg string) {
 	}
 	t.State = acpclient.TaskFailed
 	_ = q.store.UpdateTask(ctx, t)
+	q.settleSession(ctx, t.SessionID, acpclient.StatusFailed, t.Error, 0)
 	q.emit(t, "failed")
 	q.wake()
 }

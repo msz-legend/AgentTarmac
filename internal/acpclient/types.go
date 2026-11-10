@@ -1,5 +1,11 @@
 package acpclient
 
+import (
+	"encoding/json"
+
+	"github.com/agenttarmac/agenttarmac/internal/rules"
+)
+
 // Domain models shared by the SQLite store and the ACP adapters.
 // All timestamps are unix seconds, matching the schema defaults in
 // migrate_init.sql.
@@ -101,6 +107,7 @@ const (
 type ApprovalRecord struct {
 	ID                  int64  `json:"id"`
 	PermissionRequestID int64  `json:"permissionRequestId"`
+	SessionID           string `json:"sessionId,omitempty"`
 	Decision            string `json:"decision"` // "allow" or "deny"
 	DecidedAt           int64  `json:"decidedAt"`
 	DecisionBy          string `json:"decisionBy"` // "user" or "system"
@@ -121,6 +128,17 @@ type ApprovalMemory struct {
 	UpdatedAt      int64  `json:"updatedAt"`
 }
 
+// UIEventRecord is one persisted console event (vibe-trial B5: the event
+// stream used to be an in-memory ring that restarted empty).
+type UIEventRecord struct {
+	ID        int64           `json:"id"`
+	Ts        int64           `json:"ts"`
+	Type      string          `json:"type"`
+	AgentKind string          `json:"agentKind,omitempty"`
+	SessionID string          `json:"sessionId,omitempty"`
+	Payload   json.RawMessage `json:"payload"`
+}
+
 // Notification is one entry of the desktop/feishu notification outbox.
 type Notification struct {
 	ID               int64  `json:"id"`
@@ -134,11 +152,16 @@ type Notification struct {
 }
 
 // SessionExport is the archive bundle for one session (decision G: 支持导出).
+// The tasks/rules/events sections close the vibe-trial B4 gap (exports used
+// to omit everything that happened outside the adapter).
 type SessionExport struct {
 	Session            *Session             `json:"session"`
 	ToolCalls          []*ToolCall          `json:"toolCalls"`
 	PermissionRequests []*PermissionRequest `json:"permissionRequests"`
 	Approvals          []*ApprovalRecord    `json:"approvals"`
+	Tasks              []*Task              `json:"tasks,omitempty"`
+	Rules              []rules.Rule         `json:"rules,omitempty"`
+	Events             []*UIEventRecord     `json:"events,omitempty"`
 	ExportedAt         int64                `json:"exportedAt"`
 }
 

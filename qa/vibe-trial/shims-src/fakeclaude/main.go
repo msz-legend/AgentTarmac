@@ -2,12 +2,13 @@
 // Emits `claude -p --output-format stream-json --verbose` shaped lines.
 //
 // Env FAKE_CLAUDE_MODE:
-//   ok        (default) tool_use -> tool_result -> result(usage) then exit 0
-//   highrisk  tool_use with a rm -rf style command, sleeps FAKE_DELAY_MS
-//             (default 15000) so QA can post a permission decision, then
-//             tool_result -> result
-//   hang      emit init then sleep forever (for cancel tests)
-//   fail      emit init then exit 3 with a stderr message
+//
+//	ok        (default) tool_use -> tool_result -> result(usage) then exit 0
+//	highrisk  tool_use with a rm -rf style command, sleeps FAKE_DELAY_MS
+//	          (default 15000) so QA can post a permission decision, then
+//	          tool_result -> result
+//	hang      emit init then sleep forever (for cancel tests)
+//	fail      emit init then exit 3 with a stderr message
 package main
 
 import (

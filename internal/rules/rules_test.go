@@ -41,29 +41,29 @@ func TestMatchSpecificity(t *testing.T) {
 	}
 
 	// arg pattern beats bare tool.
-	if r, err := MatchFirst(rs, "Bash", "rm -rf x", "s1"); err != nil || r.ID != "r2" {
+	if r, err := MatchFirst(rs, "", "Bash", "rm -rf x", "s1"); err != nil || r.ID != "r2" {
 		t.Fatalf("most specific = %+v err=%v", r, err)
 	}
 	// bare tool fallback.
-	if r, err := MatchFirst(rs, "Bash", "npm install", "s1"); err != nil || r.ID != "r1" {
+	if r, err := MatchFirst(rs, "", "Bash", "npm install", "s1"); err != nil || r.ID != "r1" {
 		t.Fatalf("bare tool = %+v err=%v", r, err)
 	}
 	// session scope filters other sessions.
-	if _, err := MatchFirst(rs, "Grep", "anything", "s2"); err == nil {
+	if _, err := MatchFirst(rs, "", "Grep", "anything", "s2"); err == nil {
 		t.Fatal("session rule must not match another session")
 	}
-	if r, err := MatchFirst(rs, "Grep", "cargo build", "s1"); err != nil || r.ID != "r3" {
+	if r, err := MatchFirst(rs, "", "Grep", "cargo build", "s1"); err != nil || r.ID != "r3" {
 		t.Fatalf("session rule in own session = %+v err=%v", r, err)
 	}
 	// no match at all.
-	if _, err := MatchFirst(rs, "WebFetch", "https://x", "s9"); err != ErrNoMatch {
+	if _, err := MatchFirst(rs, "", "WebFetch", "https://x", "s9"); err != ErrNoMatch {
 		t.Fatalf("no-match error = %v", err)
 	}
 }
 
 func TestMatchIgnoresDenyAndOtherEffects(t *testing.T) {
 	rs := []Rule{{ID: "d1", Tool: "Bash", Scope: "always", Effect: "deny", CreatedAt: time.Now()}}
-	if _, err := MatchFirst(rs, "Bash", "anything", "s"); err != ErrNoMatch {
+	if _, err := MatchFirst(rs, "", "Bash", "anything", "s"); err != ErrNoMatch {
 		t.Fatalf("deny rules must not auto-allow in M1: %v", err)
 	}
 }

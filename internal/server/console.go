@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,6 +60,36 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 // handleEvents serves the in-memory event ring (UI 稿 §11: the console
 // replays the feed on load, then follows the live WS).
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	// Persisted stream first (vibe-trial B5: history survives restarts);
+	// query params: ?limit=N (default 200), ?session=<id> filter.
+	limit := queryInt(r, "limit", 200)
+	sessionID := r.URL.Query().Get("session")
+	if s.store != nil {
+		if recs, err := s.store.ListUIEvents(r.Context(), limit, sessionID); err == nil && len(recs) > 0 {
+			out := make([]UIEvent, 0, len(recs))
+			for i := len(recs) - 1; i >= 0; i-- { // oldest first, like the ring
+				e := recs[i]
+				var env struct {
+					Payload map[string]any `json:"payload"`
+				}
+				_ = json.Unmarshal(e.Payload, &env)
+				ui := UIEvent{
+					V:         2,
+					EventID:   fmt.Sprintf("evt_%d", e.ID),
+					TS:        time.Unix(e.Ts, 0).UTC().Format("2006-01-02T15:04:05.000Z07:00"),
+					SessionID: e.SessionID,
+					Type:      e.Type,
+					Payload:   env.Payload,
+				}
+				if e.AgentKind != "" {
+					ui.Agent = &UIEventAgent{Kind: e.AgentKind, Version: Version, InstanceID: "hub"}
+				}
+				out = append(out, ui)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"events": out})
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": s.bridge.UIEvents()})
 }
 
@@ -147,13 +176,16 @@ func (s *Server) handleNotifyStatus(w http.ResponseWriter, r *http.Request) {
 	if s.wecom != nil {
 		wecomTail = s.wecom.WebhookTail()
 	}
+	// Honest flags (vibe-trial B6): desktop mirrors web-push availability,
+	// task_completion mirrors whether an IM webhook can actually receive
+	// the task events; browser-granted switches stay client-side.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"desktop":          true,
+		"desktop":          s.push != nil,
 		"feishu":           s.notifier != nil,
 		"feishu_tail":      tail,
 		"wecom":            s.wecom != nil,
 		"wecom_tail":       wecomTail,
-		"task_completion":  true,
+		"task_completion":  s.notifier != nil || s.wecom != nil,
 		"retention_days":   s.retentionDays,
 		"version":          Version,
 		"push":             s.push != nil,
@@ -165,23 +197,67 @@ func (s *Server) handleNotifyStatus(w http.ResponseWriter, r *http.Request) {
 // handleNotifyTest sends a test message over the configured notifier
 // (WeCom takes precedence when set; otherwise Feishu).
 func (s *Server) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
-	if s.wecom != nil {
-		if err := s.wecom.Test(r.Context()); err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+	// Honor the requested channel when both are configured (vibe-trial S2:
+	// the channel param used to be ignored and errors leaked the webhook
+	// URL, which carries the signed secret).
+	channel := strings.TrimSpace(r.URL.Query().Get("channel"))
+	if channel == "" {
+		channel = channelFromBody(r)
+	}
+	if channel == "wecom" && s.wecom == nil {
+		writeError(w, http.StatusNotImplemented, "企微机器人未配置（-wecom-webhook / -wecom-aibot-*）")
+		return
+	}
+	if channel == "feishu" && s.notifier == nil {
+		writeError(w, http.StatusNotImplemented, "飞书 webhook 未配置（-feishu-webhook）")
+		return
+	}
+	if channel == "" && s.wecom != nil {
+		channel = "wecom"
+	}
+	if channel == "" {
+		if s.notifier == nil {
+			writeError(w, http.StatusNotImplemented, "no webhook notifier configured")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "channel": "wecom"})
+		channel = "feishu"
+	}
+	var err error
+	if channel == "wecom" {
+		err = s.wecom.Test(r.Context())
+	} else {
+		err = s.notifier.Test(r.Context())
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, sanitizeNotifyErr(err.Error()))
 		return
 	}
-	if s.notifier == nil {
-		writeError(w, http.StatusNotImplemented, "no webhook notifier configured")
-		return
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "channel": channel})
+}
+
+// channelFromBody pulls {"channel": "..."} out of the request body when the
+// query string did not carry one.
+func channelFromBody(r *http.Request) string {
+	var body struct {
+		Channel string `json:"channel"`
 	}
-	if err := s.notifier.Test(r.Context()); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
+	if r.Body != nil {
+		_ = json.NewDecoder(io.LimitReader(r.Body, 4*1024)).Decode(&body)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "channel": "feishu"})
+	return strings.TrimSpace(body.Channel)
+}
+
+// sanitizeNotifyErr strips URLs (webhook URLs embed the signing secret) and
+// caps the length before echoing a notifier error to the console.
+func sanitizeNotifyErr(msg string) string {
+	if i := strings.Index(msg, "http"); i >= 0 {
+		msg = msg[:i] + "<url 已隐藏>"
+	}
+	msg = strings.TrimSpace(msg)
+	if len(msg) > 200 {
+		msg = msg[:200] + "…"
+	}
+	return msg
 }
 
 // handleSessionFork creates a Hub-side fork of a session (PRD F7/D14:
@@ -196,13 +272,16 @@ func (s *Server) handleSessionFork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fork := &acpclient.Session{
-		ID:              fmt.Sprintf("%s-fork-%s", id, shortHex()),
-		AgentKind:       sess.AgentKind,
-		CWD:             sess.CWD,
-		Model:           sess.Model,
-		Provider:        sess.Provider,
-		Status:          acpclient.StatusActive,
-		Origin:          sess.Origin,
+		ID:        fmt.Sprintf("%s-fork-%s", id, shortHex()),
+		AgentKind: sess.AgentKind,
+		CWD:       sess.CWD,
+		Model:     sess.Model,
+		Provider:  sess.Provider,
+		// Ghost hygiene (vibe-trial B8): a fork has no agent behind it, so it
+		// must not advertise origin=managed/active like a live dispatch —
+		// that used to make it indistinguishable and even continuable.
+		Status:          acpclient.StatusAwaitingInput,
+		Origin:          "fork",
 		ParentSessionID: sess.ID,
 		Title:           "fork: " + sess.Title,
 	}
@@ -217,6 +296,17 @@ func (s *Server) handleSessionFork(w http.ResponseWriter, r *http.Request) {
 // nativeResumeCommand builds the system-terminal resume command for agent
 // kinds with native interactive resume (EVENT_MODEL §6 table); ACP-only
 // kinds have none, so the terminal button hides for them (PRD F8).
+// terminalUnavailable explains why the terminal button cannot work for a
+// given session (vibe-trial S17/D8: the old path handed out
+// `codex resume task-*` — the Hub's synthetic id, which no real agent
+// knows — so the command failed the moment it was pasted).
+func terminalUnavailable(sess *acpclient.Session) (string, bool) {
+	if sess.Origin == "managed" && strings.HasPrefix(sess.ID, "task-") {
+		return "托管任务的会话 ID 由 Hub 合成，agent 不认识它，无法直接 resume；请使用「继续此会话」（重新派发）或在系统终端以 agent 自己的会话 ID 恢复", true
+	}
+	return "", false
+}
+
 func nativeResumeCommand(kind, sessionID string) (string, bool) {
 	switch kind {
 	case acpclient.AgentKindClaudeCode:
@@ -235,6 +325,10 @@ func (s *Server) handleSessionTerminal(w http.ResponseWriter, r *http.Request) {
 	sess, err := s.store.GetSession(r.Context(), id)
 	if err != nil {
 		writeBridgeError(w, err)
+		return
+	}
+	if why, bad := terminalUnavailable(sess); bad {
+		writeError(w, http.StatusConflict, why)
 		return
 	}
 	cmd, ok := nativeResumeCommand(sess.AgentKind, sess.ID)
@@ -258,6 +352,10 @@ func (s *Server) handleSessionTerminalWS(w http.ResponseWriter, r *http.Request)
 	sess, err := s.store.GetSession(r.Context(), id)
 	if err != nil {
 		writeBridgeError(w, err)
+		return
+	}
+	if why, bad := terminalUnavailable(sess); bad {
+		writeError(w, http.StatusConflict, why)
 		return
 	}
 	cmd, ok := nativeResumeCommand(sess.AgentKind, sess.ID)
@@ -287,25 +385,12 @@ func (s *Server) handleSessionTerminalWS(w http.ResponseWriter, r *http.Request)
 		ReadBufferSize:  4 * 1024,
 		WriteBufferSize: 4 * 1024,
 		CheckOrigin: func(r *http.Request) bool {
-			// 仅允许同源或本地回环，防止跨站 WebSocket 劫持（PRD §9）。
-			host := r.Host
-			if host == "" {
-				host = r.URL.Host
-			}
-			switch host {
-			case "127.0.0.1:8799", "localhost:8799":
-				return true
-			default:
-				// 允许显式配置的额外源（逗号分隔，env AGENTHUB_WS_ALLOW_ORIGINS）
-				if allowed := os.Getenv("AGENTHUB_WS_ALLOW_ORIGINS"); allowed != "" {
-					for _, o := range strings.Split(allowed, ",") {
-						if o := strings.TrimSpace(o); o != "" && o == host {
-							return true
-						}
-					}
-				}
-				return false
-			}
+			// vibe-trial C2: the old check compared r.Host (the SERVER's own
+			// host) against hardcoded :8799 constants — every Origin passed
+			// on the default port, and every legit request failed on any
+			// other port (terminal-ws 401 on :18899). Same-origin policy
+			// now lives in one place: sameOriginOK.
+			return sameOriginOK(r)
 		},
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -433,7 +518,15 @@ func (s *Server) handleSW(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSessionContinue(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var body struct {
-		Text string `json:"text"`
+		Text   string `json:"text"`
+		Prompt string `json:"prompt"` // accepted alias (vibe-trial S4)
+	}
+	// Session existence first (vibe-trial S4: an unknown session used to
+	// report the confusing "text is required").
+	sess, err := s.store.GetSession(r.Context(), id)
+	if err != nil {
+		writeBridgeError(w, err)
+		return
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -441,12 +534,16 @@ func (s *Server) handleSessionContinue(w http.ResponseWriter, r *http.Request) {
 	}
 	text := strings.TrimSpace(body.Text)
 	if text == "" {
+		text = strings.TrimSpace(body.Prompt)
+	}
+	if text == "" {
 		writeError(w, http.StatusBadRequest, "text is required")
 		return
 	}
-	sess, err := s.store.GetSession(r.Context(), id)
-	if err != nil {
-		writeBridgeError(w, err)
+	// A fork has no agent behind it — continuing one used to redispatch a
+	// task with a ghost parent (vibe-trial B8).
+	if sess.Origin == "fork" {
+		writeError(w, http.StatusConflict, "分叉副本没有接入的 agent，无法继续；请对父会话继续或直接派发新任务")
 		return
 	}
 	if sess.Origin == acpclient.OriginManaged {
@@ -464,9 +561,16 @@ func (s *Server) handleSessionContinue(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, err.Error())
 				return
 			}
+			// Persist the lineage (vibe-trial A10: parent_session_id used to
+			// exist only in the response, never in the row).
+			childID := "task-" + strings.TrimPrefix(t.ID, "task_")
+			if child, gerr := s.store.GetSession(r.Context(), childID); gerr == nil {
+				child.ParentSessionID = id
+				_ = s.store.UpdateSession(r.Context(), child)
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"ok": true, "mode": "task-redispatch", "task_id": t.ID,
-				"session_id":        "task-" + strings.TrimPrefix(t.ID, "task_"),
+				"session_id":        childID,
 				"parent_session_id": id,
 			})
 			return

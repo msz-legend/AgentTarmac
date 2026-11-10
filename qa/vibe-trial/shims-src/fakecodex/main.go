@@ -2,10 +2,11 @@
 // Emits `codex exec --json` shaped JSONL events.
 //
 // Env FAKE_CODEX_MODE:
-//   ok    (default) item.started/completed(command_execution) +
-//         item.completed(agent_message) + turn.completed(usage), exit 0
-//   hang  emit one event then sleep forever
-//   fail  exit 4 with a stderr message
+//
+//	ok    (default) item.started/completed(command_execution) +
+//	      item.completed(agent_message) + turn.completed(usage), exit 0
+//	hang  emit one event then sleep forever
+//	fail  exit 4 with a stderr message
 package main
 
 import (

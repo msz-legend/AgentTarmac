@@ -158,13 +158,15 @@ func TestContinueManagedACPContentBlocks(t *testing.T) {
 // TestContinueValidation still rejects empty text and unknown sessions.
 func TestContinueValidation(t *testing.T) {
 	ts, _, _, q := newContinueDaemon(t)
-	if resp, _ := postJSON(t, ts.URL+"/api/sessions/missing/continue", testToken,
-		map[string]any{"text": "   "}); resp.StatusCode != 400 {
-		t.Fatalf("empty text = %d, want 400", resp.StatusCode)
-	}
+	// Session existence is validated before the body (vibe-trial S4: an
+	// unknown session used to report the misleading "text is required").
 	if resp, _ := postJSON(t, ts.URL+"/api/sessions/no-such/continue", testToken,
-		map[string]any{"text": "hi"}); resp.StatusCode == 200 {
-		t.Fatal("unknown session must not return 200")
+		map[string]any{"text": "hi"}); resp.StatusCode == 200 || resp.StatusCode == 400 {
+		t.Fatalf("unknown session = %d, want 404-class", resp.StatusCode)
+	}
+	if resp, _ := postJSON(t, ts.URL+"/api/sessions/missing/continue", testToken,
+		map[string]any{"text": "   "}); resp.StatusCode == 200 {
+		t.Fatal("empty text on unknown session must not return 200")
 	}
 	if len(q.calls) != 0 {
 		t.Fatalf("no re-dispatch expected for invalid input, got %d", len(q.calls))

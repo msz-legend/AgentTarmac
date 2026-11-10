@@ -23,6 +23,17 @@ func (q *fakeTaskQueue) Enqueue(_ context.Context, kind, cwd, prompt string) (*a
 	}
 	return &acpclient.Task{ID: "task_deadbeef", AgentKind: kind, CWD: cwd, Prompt: prompt, State: acpclient.TaskQueued}, nil
 }
+
+// EnqueueInSession mirrors the real queue's preset-session variant (the
+// continue flow pre-creates the child session row for lineage, A10).
+func (q *fakeTaskQueue) EnqueueInSession(ctx context.Context, kind, cwd, prompt, sessionID string) (*acpclient.Task, error) {
+	t, err := q.Enqueue(ctx, kind, cwd, prompt)
+	if err != nil {
+		return nil, err
+	}
+	t.SessionID = sessionID
+	return t, nil
+}
 func (q *fakeTaskQueue) GetTask(context.Context, string) (*acpclient.Task, error) {
 	return nil, nil
 }
@@ -83,11 +94,21 @@ func TestContinueTaskRedispatch(t *testing.T) {
 	if body["ok"] != true || body["mode"] != "task-redispatch" {
 		t.Fatalf("mode = %v, want task-redispatch; body=%v", body["mode"], body)
 	}
-	if body["task_id"] != "task_deadbeef" || body["session_id"] != "task-deadbeef" {
-		t.Fatalf("ids wrong: %v", body)
+	if body["task_id"] != "task_deadbeef" {
+		t.Fatalf("task id wrong: %v", body)
+	}
+	// A10: the child session is pre-created by the handler and its id — not
+	// one derived from the task id — comes back; the lineage is durable.
+	childID, _ := body["session_id"].(string)
+	if childID == "" || childID == "task-deadbeef" {
+		t.Fatalf("session_id should be the pre-created child id: %v", body)
 	}
 	if body["parent_session_id"] != "task-913477f3" {
 		t.Fatalf("parent_session_id = %v", body["parent_session_id"])
+	}
+	child, err := store.GetSession(context.Background(), childID)
+	if err != nil || child.ParentSessionID != "task-913477f3" {
+		t.Fatalf("child lineage not persisted: %+v err=%v", child, err)
 	}
 	if len(q.calls) != 1 {
 		t.Fatalf("Enqueue called %d times, want 1", len(q.calls))

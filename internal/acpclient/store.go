@@ -138,6 +138,22 @@ func (s *Store) AddRule(ctx context.Context, r rules.Rule) error {
 
 // RemoveRule deletes one policy rule; false = unknown id.
 func (s *Store) RemoveRule(ctx context.Context, id string) (bool, error) {
+	// Take the rule first so the always-scoped memory twin can be revoked
+	// with it (vibe-trial B12: deleting a rule used to leave the allow
+	// memory behind, diverging the two stores).
+	var r rules.Rule
+	var createdAt int64
+	err := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(agent_kind,''), tool, COALESCE(arg_pattern,''),
+		scope, effect, COALESCE(session_id,''), COALESCE(created_from,''), created_at
+		FROM rules WHERE id = ?`, id).Scan(&r.ID, &r.AgentKind, &r.Tool, &r.ArgPattern,
+		&r.Scope, &r.Effect, &r.SessionID, &r.CreatedFrom, &createdAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, wrapErr("remove rule", err)
+	}
+	r.CreatedAt = time.Unix(createdAt, 0)
 	res, err := s.db.ExecContext(ctx, `DELETE FROM rules WHERE id = ?`, id)
 	if err != nil {
 		return false, wrapErr("remove rule", err)
@@ -145,6 +161,9 @@ func (s *Store) RemoveRule(ctx context.Context, id string) (bool, error) {
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, wrapErr("remove rule", err)
+	}
+	if n > 0 && r.Scope == "always" {
+		_ = s.DeleteApprovalMemoryByKey(ctx, r.AgentKind, r.Tool, r.ArgPattern)
 	}
 	return n > 0, nil
 }
@@ -666,7 +685,7 @@ func (s *Store) ExportSession(ctx context.Context, id string) (*SessionExport, e
 	// Filter by the session_id column (migration 0007): system verdicts
 	// carry permission_request_id IS NULL and the old INNER JOIN dropped
 	// them from the archive entirely (vibe-trial B3).
-	rows, err := s.db.QueryContext(ctx, `SELECT ah.id, ah.permission_request_id, ah.decision, ah.decided_at, ah.decision_by, ah.notes
+	rows, err := s.db.QueryContext(ctx, `SELECT ah.id, ah.permission_request_id, ah.session_id, ah.decision, ah.decided_at, ah.decision_by, ah.notes
 		FROM approval_history ah WHERE ah.session_id = ?
 		ORDER BY ah.id`, id)
 	if err != nil {
@@ -677,10 +696,12 @@ func (s *Store) ExportSession(ctx context.Context, id string) (*SessionExport, e
 	for rows.Next() {
 		var ah ApprovalRecord
 		var permReqID sql.NullInt64
+		var sessionID sql.NullString
 		var notes sql.NullString
-		if err := rows.Scan(&ah.ID, &permReqID, &ah.Decision, &ah.DecidedAt, &ah.DecisionBy, &notes); err != nil {
+		if err := rows.Scan(&ah.ID, &permReqID, &sessionID, &ah.Decision, &ah.DecidedAt, &ah.DecisionBy, &notes); err != nil {
 			return nil, wrapErr("export session", err)
 		}
+		ah.SessionID = sessionID.String
 		ah.PermissionRequestID = permReqID.Int64
 		ah.Notes = notes.String
 		approvals = append(approvals, &ah)

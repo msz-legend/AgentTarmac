@@ -128,6 +128,8 @@ h1{font-size:19px;font-weight:650;letter-spacing:-.025em;margin:0 0 4px}
 .pill.s-dead,.pill.s-failed{color:var(--red);border-color:#5c3530}
 .pill.s-dead .dot,.pill.s-failed .dot{background:var(--red)}
 .pill.s-idle,.pill.s-finished{color:var(--muted)}
+.pill.s-cancelled{color:var(--amber);border-color:var(--amber-dim)}
+.pill.s-cancelled .dot{background:var(--amber)}
 .pill.s-starting{color:var(--blue);border-color:#33465c}
 .pill.s-starting .dot{background:var(--blue)}
 .risk{display:inline-block;padding:1px 7px;border-radius:5px;font-size:10.5px;font-weight:700;letter-spacing:.02em}
@@ -182,7 +184,7 @@ h1{font-size:19px;font-weight:650;letter-spacing:-.025em;margin:0 0 4px}
 .ev-kind{font-family:var(--mono);font-size:11px;color:var(--muted);flex:0 0 auto}
 .ev-body{flex:1;min-width:0}
 .ev-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ev-detail{color:var(--faint);font-size:11.5px;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ev-detail{color:var(--faint);font-size:11.5px;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:8px}
 
 /* rules */
 .rule-row{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line);font-size:12.5px}
@@ -935,6 +937,7 @@ function wsToEvent(m){
   }
   if (m.type === "agent.request") return {ts, type:"task", payload:{action:"dispatch", method:m.method, request_id:m.requestId}};
   if (m.type === "agent.response") return {ts, type:"task", payload:{action:"finished", request_id:m.requestId}};
+  if (m.type === "task.event"){ return m.event || null; } // live task events (R2-F2)
   if (m.type === "task.refresh"){ return null; }
   if (m.type === "frame.in"){
     const p = m.params || {};
@@ -1017,7 +1020,7 @@ const kindOf = (agent, sessionID) => (agent && agent.kind)
   || ((S.sessions.find(x => x.id === sessionID) || {}).kind) || "";
 const pillFor = st => {
   const m = {running:"s-running", waiting_approval:"s-waiting_approval", dead:"s-dead", failed:"s-failed",
-             idle:"s-idle", finished:"s-finished", starting:"s-starting"};
+             idle:"s-idle", finished:"s-finished", starting:"s-starting", cancelled:"s-cancelled"};
   return `<span class="pill ${m[st]||""}"><span class="dot"></span>${esc(st||"—")}</span>`;
 };
 
@@ -1058,7 +1061,7 @@ function renderTasks(){
 function taskRowHTML(task){
   const st = task.state || "queued";
   const actions = [];
-  if (st === "failed") actions.push(`<button class="btn" data-action="taskRetry" data-id="${esc(task.id)}">↻</button>`);
+  if (st === "failed" || st === "cancelled") actions.push(`<button class="btn" data-action="taskRetry" data-id="${esc(task.id)}" title="${esc(t("重试"))}">↻</button>`);
   if (st === "queued" || st === "running") actions.push(`<button class="btn" data-action="taskCancel" data-id="${esc(task.id)}">${esc(t("取消任务"))}</button>`);
   if (task.sessionId) actions.push(`<a href="#" class="linkbtn" data-action="openSession" data-id="${esc(task.sessionId)}">${esc(t("查看会话"))}</a>`);
   return `
@@ -1080,6 +1083,7 @@ function mapTaskState(st){
     case "running": return "running";
     case "finished": return "finished";
     case "failed": return "failed";
+    case "cancelled": return "cancelled"; // vibe-trial R2-F1: was rendered as idle
     default: return "idle";
   }
 }

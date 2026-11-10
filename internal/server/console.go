@@ -156,6 +156,22 @@ func (s *Server) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// truncateTitle clips a prompt into a session title (UTF-8 safe enough for
+// v1: cut on byte boundary then drop a partial trailing rune).
+func truncateTitle(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := s[:n]
+	for i := 0; i < 3 && len(cut) > 0; i++ {
+		if r := []byte(cut)[len(cut)-1]; r&0xC0 != 0x80 {
+			break
+		}
+		cut = cut[:len(cut)-1]
+	}
+	return cut + "…"
+}
+
 // mustJSON marshals v, returning null on failure (never used with
 // unmarshalable values).
 func mustJSON(v any) json.RawMessage {
@@ -556,17 +572,28 @@ func (s *Server) handleSessionContinue(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "任务队列不可用，无法重新派发该会话")
 				return
 			}
-			t, err := s.tasks.Enqueue(r.Context(), sess.AgentKind, sess.CWD, text)
+			// Create the child session row FIRST so the lineage is durable
+			// regardless of scheduling (vibe-trial A10: writing it after
+			// Enqueue raced the queue's async tryStart and silently lost).
+			// tryStart's existing-session branch reuses this row.
+			childID := "task-" + shortHex()
+			child := &acpclient.Session{
+				ID:              childID,
+				AgentKind:       sess.AgentKind,
+				CWD:             sess.CWD,
+				Status:          acpclient.StatusActive,
+				Origin:          acpclient.OriginManaged,
+				ParentSessionID: id,
+				Title:           truncateTitle(text, 80),
+			}
+			if err := s.store.CreateSession(r.Context(), child); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			t, err := s.tasks.EnqueueInSession(r.Context(), sess.AgentKind, sess.CWD, text, childID)
 			if err != nil {
 				writeError(w, http.StatusConflict, err.Error())
 				return
-			}
-			// Persist the lineage (vibe-trial A10: parent_session_id used to
-			// exist only in the response, never in the row).
-			childID := "task-" + strings.TrimPrefix(t.ID, "task_")
-			if child, gerr := s.store.GetSession(r.Context(), childID); gerr == nil {
-				child.ParentSessionID = id
-				_ = s.store.UpdateSession(r.Context(), child)
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"ok": true, "mode": "task-redispatch", "task_id": t.ID,

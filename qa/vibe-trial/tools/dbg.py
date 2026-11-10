@@ -63,7 +63,7 @@ def main():
         print("  permission_requests:", n)
         n = con.execute("select count(*) from approval_history").fetchone()[0]
         print("  approval_history:", n)
-        rows = con.execute("select tool,scope,effect,created_at from approval_memory limit 10").fetchall()
+        rows = con.execute("select agent_kind,tool,decision,scope from approval_memory limit 10").fetchall()
         for r in rows:
             print("  approval_memory:", r)
         rows = con.execute("select id,agent_kind,tool,scope,effect,session_id from rules").fetchall()

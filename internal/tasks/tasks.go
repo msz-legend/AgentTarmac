@@ -303,6 +303,21 @@ func (q *Queue) Enqueue(ctx context.Context, agentKind, cwd, prompt string) (*ac
 	return t, nil
 }
 
+// EnqueueInSession is Enqueue with a caller-chosen managed session id (the
+// continue/redispatch flow pre-creates the session row so lineage survives
+// scheduling races, vibe-trial A10).
+func (q *Queue) EnqueueInSession(ctx context.Context, agentKind, cwd, prompt, sessionID string) (*acpclient.Task, error) {
+	t, err := q.Enqueue(ctx, agentKind, cwd, prompt)
+	if err != nil {
+		return nil, err
+	}
+	t.SessionID = sessionID
+	if err := q.store.UpdateTask(ctx, t); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
 // findDuplicate returns an existing queued/running task with the same
 // agent+cwd+prompt (lightweight idempotency for double-clicks and retries
 // of the same request, vibe-trial B9).
@@ -409,8 +424,12 @@ func (q *Queue) Paused() bool {
 
 // tryStart moves a queued task to running and spawns the agent headless.
 func (q *Queue) tryStart(ctx context.Context, t *acpclient.Task) bool {
-	// Managed session row (PRD D13: Hub 启动的会话全托管).
-	sessionID := "task-" + strings.TrimPrefix(t.ID, "task_")
+	// Managed session row (PRD D13: Hub 启动的会话全托管). A caller-provided
+	// session id (EnqueueInSession) wins over the derived default.
+	sessionID := t.SessionID
+	if sessionID == "" {
+		sessionID = "task-" + strings.TrimPrefix(t.ID, "task_")
+	}
 	sess := &acpclient.Session{
 		ID:        sessionID,
 		AgentKind: t.AgentKind,

@@ -102,15 +102,23 @@ func main() {
 		}
 		switch msg.Method {
 		case "initialize":
-			logLine("METHOD=initialize -> result")
+			logLine("METHOD=initialize -> result + 2 unsolicited session/update (P0-B repro)")
 			writeJSON(map[string]any{"jsonrpc": "2.0", "id": *id, "result": map[string]any{
 				"protocolVersion": 1,
-				"agentInfo":       map[string]any{"name": "fake", "version": "2.0.0"},
+				"agentInfo":       map[string]any{"name": "fake", "version": "2.1.0"},
 				"capabilities": map[string]any{
 					"loadSession":        false,
 					"promptCapabilities": map[string]any{"image": false, "embeddedContext": false},
 					"mcpCapabilities":    map[string]any{},
 				},
+			}})
+			writeJSON(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+				"sessionId": agentSessionID,
+				"update":    map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "fake agent warming up (unsolicited update 1)"}},
+			}})
+			writeJSON(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
+				"sessionId": agentSessionID,
+				"update":    map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "still alive (unsolicited update 2)"}},
 			}})
 		case "session/new":
 			logLine("METHOD=session/new -> " + agentSessionID)
@@ -138,7 +146,7 @@ func main() {
 				deferredPrompt = &pending{method: msg.Method, frame: f}
 				writeJSON(map[string]any{"jsonrpc": "2.0", "id": 4242, "method": "session/request_permission", "params": map[string]any{
 					"sessionId": agentSessionID,
-					"toolCall":  map[string]any{"toolCallId": "tc_fake_1", "title": "Bash", "kind": "execute", "rawInput": map[string]any{"command": "echo perm-probe"}},
+					"toolCall":  map[string]any{"toolCallId": "tc_fake_1", "title": "Bash", "kind": "execute", "rawInput": map[string]any{"command": "rm -rf ./evil-target"}},
 					"options": []any{
 						map[string]any{"optionId": "opt_once", "name": "Allow once", "kind": "allow_once"},
 						map[string]any{"optionId": "opt_session", "name": "Allow for session", "kind": "allow_session"},

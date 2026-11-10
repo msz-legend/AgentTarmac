@@ -87,6 +87,7 @@ func (s *Server) SetRunner(r *runner.Runner) { s.runner = r }
 // TaskQueue is the F6 task surface the server needs (subset of *tasks.Queue).
 type TaskQueue interface {
 	Enqueue(ctx context.Context, agentKind, cwd, prompt string) (*acpclient.Task, error)
+	EnqueueInSession(ctx context.Context, agentKind, cwd, prompt, sessionID string) (*acpclient.Task, error)
 	GetTask(ctx context.Context, id string) (*acpclient.Task, error)
 	ListTasks(ctx context.Context, state string) ([]*acpclient.Task, error)
 	Retry(ctx context.Context, id string) (*acpclient.Task, error)

@@ -139,7 +139,7 @@ func (b *Bridge) agentKindFor(sessionID string) string {
 
 // recordUIEvent stamps the frozen envelope fields and appends to the ring
 // (never blocks, never fails).
-func (b *Bridge) recordUIEvent(e UIEvent) {
+func (b *Bridge) recordUIEvent(e UIEvent) UIEvent {
 	e.V = 2
 	if e.EventID == "" {
 		e.EventID = newEventID()
@@ -174,6 +174,7 @@ func (b *Bridge) recordUIEvent(e UIEvent) {
 			cancel()
 		}
 	}
+	return e
 }
 
 // agentKindOf flattens the event agent block for persistence.
@@ -255,6 +256,8 @@ func (b *Bridge) RecordFrameOut(method string, params json.RawMessage) {
 		Reason         string `json:"reason"`
 		Status         string `json:"status"`
 		IsComplete     bool   `json:"isComplete"`
+		Content        string `json:"content"`
+		Plan           string `json:"plan"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -280,8 +283,16 @@ func (b *Bridge) RecordFrameOut(method string, params json.RawMessage) {
 				"rule_supported": true,
 			}})
 	case "session/update":
-		b.recordUIEvent(UIEvent{Type: "status", SessionID: p.SessionID,
-			Payload: map[string]any{"state": mapUIState(p.Status, p.IsComplete)}})
+		// Carry progress content/plan through (vibe-trial R2-F5: the status
+		// event used to drop the agent's message text entirely).
+		payload := map[string]any{"state": mapUIState(p.Status, p.IsComplete)}
+		if p.Content != "" {
+			payload["content"] = p.Content
+		}
+		if p.Plan != "" {
+			payload["plan"] = p.Plan
+		}
+		b.recordUIEvent(UIEvent{Type: "status", SessionID: p.SessionID, Payload: payload})
 	case "tool_call/approved", "tool_call/rejected":
 		action := "approved"
 		if method == "tool_call/rejected" {
@@ -503,7 +514,7 @@ func (b *Bridge) RecordFork(parent, fork *acpclient.Session) {
 // TaskEvent publishes one task lifecycle event (EVENT_MODEL v0.2 type
 // "task", C6) into the ring and over the live WS feed.
 func (b *Bridge) TaskEvent(taskID, action, sessionID, agentKind, title, errText string) {
-	b.recordUIEvent(UIEvent{
+	e := b.recordUIEvent(UIEvent{
 		Type:      "task",
 		Agent:     agentRef(agentKind),
 		SessionID: sessionID,
@@ -516,6 +527,9 @@ func (b *Bridge) TaskEvent(taskID, action, sessionID, agentKind, title, errText 
 			"error":      errText,
 		},
 	})
+	// Live delivery (vibe-trial R2-F2): task events used to reach the open
+	// console only after the next /api/events replay.
+	b.broadcast(map[string]any{"type": "task.event", "event": e})
 }
 
 // SendAgentRequest broadcasts a Hub→agent command on the WS bus. The bus is

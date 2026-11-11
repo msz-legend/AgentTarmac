@@ -1103,9 +1103,16 @@ func (a *BaseAdapter) resolvePendingLocked(ctx context.Context, p *pendingPermis
 	}
 	delete(a.pending, p.RequestUID)
 
+	// Emit the AUTHORITATIVE session status (vibe-trial R4-F1: a hardcoded
+	// "running" here landed after the task's finished event whenever the
+	// human verdict came late, and live boards replayed back to running).
+	finalStatus := StatusRunning
+	if sess != nil {
+		finalStatus = sess.Status
+	}
 	a.emitLocked("session/update", map[string]any{
 		"sessionId":           p.SessionID,
-		"status":              StatusRunning,
+		"status":              finalStatus,
 		"permissionRequestId": p.RequestUID,
 		"permissionOutcome":   outcome,
 		"toolCallId":          p.ToolCallAgentID,

@@ -114,11 +114,18 @@ func (s *Server) SetFSBrowser(dataDir string) {
 // requests additionally trigger the Feishu notifier (decision F) when one is
 // configured.
 func (s *Server) EmitFrame(method string, params json.RawMessage) {
+	// Attribute the frame to its agent kind (vibe-trial R4-F2: live frame.out
+	// envelopes used to reach the board agent-less, rendering "—" rows).
+	var ph struct {
+		SessionID string `json:"sessionId"`
+	}
+	_ = json.Unmarshal(params, &ph)
 	s.bridge.broadcast(map[string]any{
-		"type":   "frame.out",
-		"ts":     time.Now().Unix(),
-		"method": method,
-		"params": params,
+		"type":      "frame.out",
+		"ts":        time.Now().Unix(),
+		"method":    method,
+		"params":    params,
+		"agentKind": s.bridge.agentKindFor(ph.SessionID),
 	})
 	s.bridge.RecordFrameOut(method, params)
 	if method == "session/request_permission" && s.notifier != nil {

@@ -914,7 +914,7 @@ const S = {
   pending: new Map(),     // request_id -> payload
   resolvedIds: new Set(), // keeps replays from resurrecting stale entries
   confirmArm: new Set(),  // allow_always double-confirm (decision B)
-  tasks: [], tasksPaused: false,
+  tasks: [], tasksPaused: false, toolCallsBySession: {},
   selected: null,
   denyFor: null,
   rosterFilter: "all",
@@ -979,11 +979,12 @@ function wsToEvent(m){
   }
   if (m.type === "frame.out"){
     const p = m.params || {};
-    if (m.method === "session/request_permission") return {ts, type:"permission_request", session_id:p.sessionId, payload:{
+    const ag = m.agentKind ? {kind:m.agentKind} : undefined; // R4-F2 attribution
+    if (m.method === "session/request_permission") return {ts, type:"permission_request", agent:ag, session_id:p.sessionId, payload:{
       request_id: p.requestId, tool: p.name, command: p.mainArg || p.commandPattern, risk: p.risk, reason: p.reason, capabilities:["answerable"]}};
-    if (m.method === "session/update") return {ts, type:"status", session_id:p.sessionId, payload:{state: mapState(p.status, p.isComplete)}};
+    if (m.method === "session/update") return {ts, type:"status", agent:ag, session_id:p.sessionId, payload:{state: mapState(p.status, p.isComplete), content:p.content, plan:p.plan}};
     if (m.method === "tool_call/approved" || m.method === "tool_call/rejected")
-      return {ts, type:"tool_call", session_id:p.sessionId, payload:{tool:p.name, call_id:p.toolCallId, action: m.method === "tool_call/approved" ? "approved" : "rejected"}};
+      return {ts, type:"tool_call", agent:ag, session_id:p.sessionId, payload:{tool:p.name, call_id:p.toolCallId, action: m.method === "tool_call/approved" ? "approved" : "rejected"}};
     return null;
   }
   return null;
@@ -1300,16 +1301,35 @@ function renderSessions(){
 // session-filtered event tail.
 function sessionDetailHTML(s){
   const evs = S.events.filter(e => e.session_id === s.id).slice(-50).reverse();
+  const calls = (S.toolCallsBySession[s.id] || []);
+  const trail = calls.length ? `
+    <div style="padding:0 16px 8px">
+      ${calls.map(c => `
+        <div class="ev" title="${esc(c.rawInput||"")}">
+          <span class="ev-time">${esc(fmtTime((c.createdAt||0)*1000))}</span>
+          <span class="ev-kind">${esc(c.name||"tool")}</span>
+          <span class="ev-body"><span class="ev-text">${esc(c.status||"")}${c.risk && c.risk !== "low" ? " · risk:" + esc(c.risk) : ""}</span>
+          <span class="ev-detail">${esc(String(c.rawInput||"").slice(0,80))}</span></span>
+        </div>`).join("")}
+    </div>` : "";
   return `
   <div style="background:var(--surface2);border-bottom:1px solid var(--line)">
     <div style="padding:10px 16px">
       <div class="strip-meta">${t("会话详情")} · ${esc(label(s.kind))} · ${esc(s.cwd||"")} · origin=${esc(s.origin||"—")}${s.parent ? " · fork←" + esc(s.parent) : ""} · tokens ${s.tokensIn||0}/${s.tokensOut||0}</div>
     </div>
+    ${trail}
     ${evs.length ? evs.map(evHTML).join("") : `<div class="empty">${esc(t("暂无数据"))}</div>`}
   </div>`;
 }
 
 // refreshSessions re-pulls the session ledger (fork/continue flows).
+async function fetchToolCalls(sessionId){
+  try {
+    const j = await api("/api/tool-calls?sessionId=" + encodeURIComponent(sessionId) + "&limit=50");
+    S.toolCallsBySession[sessionId] = j.toolCalls || j.calls || [];
+  } catch(e){ /* trail is best-effort */ }
+}
+
 async function refreshSessions(){
   try {
     const se = await api("/api/sessions");
@@ -1608,11 +1628,13 @@ document.addEventListener("click", e => {
   if (a === "toggleSession"){
     const id = e.target.closest("[data-action]").dataset.id;
     S.openSession = S.openSession === id ? null : id;
+    if (S.openSession) fetchToolCalls(id).then(renderSessions); // R4-F3 trail
     renderSessions();
   }
   if (a === "openSession"){
     // 放行条 → 会话视图跳转入口 (PRD F8: 三处入口之一)
     S.openSession = e.target.closest("[data-action]").dataset.id;
+    fetchToolCalls(S.openSession).then(renderSessions);
     setView("sessions");
   }
   if (a === "sessionFork"){

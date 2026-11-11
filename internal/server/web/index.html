@@ -940,12 +940,15 @@ async function api(path, opts){
 
 /* ---------- ws ---------- */
 let ws = null, wsRetry = 0;
+// WS reconnect (R6-F1): a daemon restart must not strand a loaded console.
+let wsReconnectScheduled = false;
 function connect(){
   const url = BOOT.addr || ("ws://" + location.host + "/ws");
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   ws = new WebSocket(url + "?token=" + encodeURIComponent(TOKEN));
-  ws.onopen = () => { wsRetry = 0; setConn(true); };
-  ws.onclose = () => { setConn(false); setTimeout(connect, Math.min(8000, 500 * (++wsRetry))); };
-  ws.onerror = () => {};
+  ws.onopen = () => { wsRetry = 0; wsReconnectScheduled = false; setConn(true); };
+  ws.onclose = () => { setConn(false); if (!wsReconnectScheduled) { wsReconnectScheduled = true; setTimeout(() => { wsReconnectScheduled = false; connect(); }, Math.min(8000, 500 * (++wsRetry))); } };
+  ws.onerror = () => { ws.close(); };
   ws.onmessage = ev => {
     let m; try { m = JSON.parse(ev.data); } catch(e){ return; }
     const e = wsToEvent(m);

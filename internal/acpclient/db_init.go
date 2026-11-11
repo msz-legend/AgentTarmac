@@ -86,6 +86,11 @@ CREATE INDEX IF NOT EXISTS idx_ui_events_session ON ui_events(session_id);`},
 	// B3: system verdicts with permission_request_id IS NULL were lost by
 	// the export's INNER JOIN because the table carried no session column).
 	{"0007_approval_session", `ALTER TABLE approval_history ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`},
+	// 0008 records the real session id the agent generates (ACP session/new)
+	// so Hub resume/target surfaces expose the agent's own id instead of only
+	// the Hub-synthesized task- id (vibe-trial R8: S17 honest terminal advice,
+	// and native resume can point at the real agent session id).
+	{"0008_session_agent_session_id", `ALTER TABLE sessions ADD COLUMN agent_session_id TEXT NOT NULL DEFAULT ''`},
 }
 
 // ErrNotFound is returned by store lookups when the requested row does not exist.

@@ -53,6 +53,23 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	html := strings.Replace(string(webIndexHTML), "/*__BOOT__*/null", string(boot), 1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// CSP (R7-4): single embedded page needs unsafe-inline for script/style,
+	// but connections are locked to same-origin (API + WS on the served host).
+	// object-src 'none' / frame-ancestors 'none' harden against clickjacking
+	// and plugin execution; connect-src is host-relative so alternate -addr
+	// deployments stay functional.
+	host := r.Host
+	scheme := "ws"
+	if r.TLS != nil {
+		scheme = "wss"
+	}
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'self'; "+
+			"script-src 'self' 'unsafe-inline'; "+
+			"style-src 'self' 'unsafe-inline'; "+
+			"connect-src 'self' "+scheme+"://"+host+"; "+
+			"img-src 'self'; font-src 'self'; object-src 'none'; "+
+			"base-uri 'self'; frame-ancestors 'none'")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(html))
 }
@@ -317,7 +334,7 @@ func (s *Server) handleSessionFork(w http.ResponseWriter, r *http.Request) {
 // `codex resume task-*` — the Hub's synthetic id, which no real agent
 // knows — so the command failed the moment it was pasted).
 func terminalUnavailable(sess *acpclient.Session) (string, bool) {
-	if sess.Origin == "managed" && strings.HasPrefix(sess.ID, "task-") {
+	if sess.Origin == "managed" && strings.HasPrefix(sess.ID, "task-") && sess.AgentSessionID == "" {
 		return "托管任务的会话 ID 由 Hub 合成，agent 不认识它，无法直接 resume；请使用「继续此会话」（重新派发）或在系统终端以 agent 自己的会话 ID 恢复", true
 	}
 	return "", false
@@ -347,7 +364,14 @@ func (s *Server) handleSessionTerminal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, why)
 		return
 	}
-	cmd, ok := nativeResumeCommand(sess.AgentKind, sess.ID)
+	// R8: native resume targets the agent's own session id (agentSessionId,
+	// captured from session/new); fall back to the Hub's task-* id only when
+	// the agent never reported one (legacy runs).
+	resumeID := sess.AgentSessionID
+	if resumeID == "" {
+		resumeID = sess.ID
+	}
+	cmd, ok := nativeResumeCommand(sess.AgentKind, resumeID)
 	if !ok {
 		writeError(w, http.StatusConflict, "该 Agent 类型无原生交互式恢复命令，请在 Hub 内查看（PRD F8）")
 		return
@@ -374,7 +398,12 @@ func (s *Server) handleSessionTerminalWS(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusConflict, why)
 		return
 	}
-	cmd, ok := nativeResumeCommand(sess.AgentKind, sess.ID)
+	// R8: native resume targets the agent's own session id.
+	resumeID := sess.AgentSessionID
+	if resumeID == "" {
+		resumeID = sess.ID
+	}
+	cmd, ok := nativeResumeCommand(sess.AgentKind, resumeID)
 	if !ok {
 		writeError(w, http.StatusConflict, "该 Agent 类型无内嵌交互式终端，请使用系统终端（PRD F8）")
 		return

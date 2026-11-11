@@ -261,8 +261,10 @@ func (q *Queue) loop() {
 }
 
 // maxPromptLen caps the dispatch prompt (vibe-trial B9: unbounded prompts
-// could be queued and only fail at spawn time).
-const maxPromptLen = 64 * 1024
+// could be queued and only fail at spawn time). Kept well below the Windows
+// CreateProcess command-line limit (~32KB) since the prompt rides a CLI
+// argument for claude -p; 16KB leaves headroom for the exe path and flags.
+const maxPromptLen = 16 * 1024
 
 // Enqueue adds a task (PRD D13: 派发) and wakes the dispatcher.
 // Fail-fast validation (vibe-trial B9): cwd must exist, the agent binary

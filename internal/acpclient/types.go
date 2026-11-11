@@ -51,6 +51,7 @@ type Session struct {
 	Title           string `json:"title"`           // 首条 prompt 摘要 (PRD F7)
 	CreatedAt       int64  `json:"createdAt"`
 	UpdatedAt       int64  `json:"updatedAt"`
+	AgentSessionID  string `json:"agentSessionId"` // R8: real session id the agent generates (ACP session/new); native resume targets this
 }
 
 // ToolCall is one observed tool invocation inside a session.

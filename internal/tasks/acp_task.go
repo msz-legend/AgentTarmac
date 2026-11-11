@@ -145,6 +145,14 @@ func (q *Queue) streamACP(ctx context.Context, t *acpclient.Task, sessionID stri
 			p.agentSes = newRes.SessionID
 		}
 	}
+	// Record the agent-generated session id on the Hub session row so resume
+	// and terminal surfaces target the agent's own id, not Hub's task-* (vibe-trial R8).
+	if p.agentSes != sessionID {
+		if sess, gerr := q.store.GetSession(ctx, p.hubSess); gerr == nil {
+			sess.AgentSessionID = p.agentSes
+			_ = q.store.UpdateSession(ctx, sess)
+		}
+	}
 
 	// 3. session/prompt (content-block array, per the ACP spec).
 	promptID := p.nextID()

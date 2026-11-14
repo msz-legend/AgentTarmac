@@ -91,6 +91,10 @@ CREATE INDEX IF NOT EXISTS idx_ui_events_session ON ui_events(session_id);`},
 	// the Hub-synthesized task- id (vibe-trial R8: S17 honest terminal advice,
 	// and native resume can point at the real agent session id).
 	{"0008_session_agent_session_id", `ALTER TABLE sessions ADD COLUMN agent_session_id TEXT NOT NULL DEFAULT ''`},
+	// 0009 accumulates the agent's answer text (user request 2026-11-14:
+	// 看到回话的具体内容 — the answer becomes a first-class session attribute
+	// surfaced on task rows and in exports, not just event-stream data).
+	{"0009_session_answer", `ALTER TABLE sessions ADD COLUMN answer TEXT NOT NULL DEFAULT ''`},
 }
 
 // ErrNotFound is returned by store lookups when the requested row does not exist.

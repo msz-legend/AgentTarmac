@@ -40,7 +40,7 @@ func wrapErr(what string, err error) error {
 
 const sessionCols = `id, agent_kind, cwd, model, provider, status, turns, input_tokens, output_tokens,
 	last_error, is_terminal, is_closed, origin, parent_session_id, title, created_at, updated_at,
-	agent_session_id`
+	agent_session_id, answer`
 
 func scanSession(row interface{ Scan(...any) error }) (*Session, error) {
 	var s Session
@@ -48,7 +48,7 @@ func scanSession(row interface{ Scan(...any) error }) (*Session, error) {
 	err := row.Scan(&s.ID, &s.AgentKind, &s.CWD, &s.Model, &s.Provider, &s.Status, &s.Turns,
 		&s.InputTokens, &s.OutputTokens, &lastError, &s.IsTerminal, &s.IsClosed,
 		&s.Origin, &s.ParentSessionID, &s.Title, &s.CreatedAt, &s.UpdatedAt,
-		&s.AgentSessionID)
+		&s.AgentSessionID, &s.Answer)
 	if err != nil {
 		return nil, err
 	}
@@ -70,12 +70,12 @@ func (s *Store) CreateSession(ctx context.Context, sess *Session) error {
 	}
 	sess.UpdatedAt = now
 	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions
-		(id, agent_kind, cwd, model, provider, status, turns, input_tokens, output_tokens, last_error, is_terminal, is_closed, origin, parent_session_id, title, created_at, updated_at, agent_session_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, agent_kind, cwd, model, provider, status, turns, input_tokens, output_tokens, last_error, is_terminal, is_closed, origin, parent_session_id, title, created_at, updated_at, agent_session_id, answer)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.ID, sess.AgentKind, sess.CWD, sess.Model, sess.Provider, sess.Status, sess.Turns,
 		sess.InputTokens, sess.OutputTokens, sess.LastError, sess.IsTerminal, sess.IsClosed,
 		sess.Origin, sess.ParentSessionID, sess.Title, sess.CreatedAt, sess.UpdatedAt,
-		sess.AgentSessionID)
+		sess.AgentSessionID, sess.Answer)
 	return wrapErr("create session", err)
 }
 
@@ -117,10 +117,10 @@ func (s *Store) UpdateSession(ctx context.Context, sess *Session) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET
 		status = ?, turns = ?, input_tokens = ?, output_tokens = ?, last_error = ?,
 		is_terminal = ?, is_closed = ?, title = ?, cwd = ?, agent_kind = ?, origin = ?,
-		parent_session_id = ?, agent_session_id = ?, updated_at = ? WHERE id = ?`,
+		parent_session_id = ?, agent_session_id = ?, answer = ?, updated_at = ? WHERE id = ?`,
 		sess.Status, sess.Turns, sess.InputTokens, sess.OutputTokens, sess.LastError,
 		sess.IsTerminal, sess.IsClosed, sess.Title, sess.CWD, sess.AgentKind, sess.Origin,
-		sess.ParentSessionID, sess.AgentSessionID, sess.UpdatedAt, sess.ID)
+		sess.ParentSessionID, sess.AgentSessionID, sess.Answer, sess.UpdatedAt, sess.ID)
 	return wrapErr("update session", err)
 }
 

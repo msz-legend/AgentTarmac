@@ -1152,6 +1152,42 @@ func isTerminalToolStatus(s string) bool {
 	return s == ToolCompleted || s == ToolFailed || s == ToolRejected
 }
 
+// answerCap bounds the accumulated answer per session (bytes).
+const answerCap = 32 * 1024
+
+// appendAnswer appends one streamed chunk / result line to the session's
+// answer attribute, rune-safe under answerCap. Once the cap is reached a
+// truncation marker is appended once and further chunks are dropped.
+func appendAnswer(cur, chunk string) string {
+	if len(cur) >= answerCap {
+		if strings.HasSuffix(cur, "…(截断)") {
+			return cur
+		}
+		return truncateRunes(cur, answerCap) + "…(截断)"
+	}
+	next := cur
+	if next != "" {
+		next += "\n"
+	}
+	next += chunk
+	if len(next) > answerCap {
+		return truncateRunes(next, answerCap) + "…(截断)"
+	}
+	return next
+}
+
+// truncateRunes cuts a string to at most n bytes without splitting a rune.
+func truncateRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := s[:n]
+	for len(cut) > 0 && cut[len(cut)-1]&0xC0 == 0x80 {
+		cut = cut[:len(cut)-1] // drop continuation bytes of a split rune
+	}
+	return cut
+}
+
 // writeAllowMemoryLocked upserts an allow row into approval_memory for an
 // always-scoped rule (vibe-trial B12: rules and memory now move together).
 func (a *BaseAdapter) writeAllowMemoryLocked(ctx context.Context, p *pendingPermission) error {
@@ -1325,6 +1361,13 @@ func (a *BaseAdapter) handleSessionUpdate(rawMsg json.RawMessage) (json.RawMessa
 			state.sess.InputTokens += usage.InputTokens
 			state.sess.OutputTokens += usage.OutputTokens
 		}
+	}
+	// Accumulate the agent's answer (user request 2026-11-14: 看到回话的具体
+	// 内容 — streamed chunks and the final result line append into one
+	// session attribute; capped rune-safe at 32KB). Plan text is not part of
+	// the answer.
+	if payload.Content != "" {
+		state.sess.Answer = appendAnswer(state.sess.Answer, payload.Content)
 	}
 	if status == StatusCompleted {
 		state.sess.IsTerminal = true

@@ -185,6 +185,11 @@ h1{font-size:19px;font-weight:650;letter-spacing:-.025em;margin:0 0 4px}
 .ev-body{flex:1;min-width:0}
 .ev-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ev-detail{color:var(--faint);font-size:11.5px;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:8px}
+.mdbody .mdpre{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin:6px 0;overflow:auto;font-family:var(--mono);font-size:11.5px}
+.mdbody .mdcode{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:1px 4px;font-family:var(--mono);font-size:11.5px}
+.mdbody .mdhead{font-weight:600;margin:6px 0 2px}
+.mdbody .mdli{margin:1px 0 1px 10px}
+.mdbody .mdlink{color:var(--amber)}
 
 /* rules */
 .rule-row{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line);font-size:12.5px}
@@ -1103,11 +1108,16 @@ function taskRowHTML(task){
   if (st === "failed" || st === "cancelled") actions.push(`<button class="btn" data-action="taskRetry" data-id="${esc(task.id)}" title="${esc(t("重试"))}">↻</button>`);
   if (st === "queued" || st === "running") actions.push(`<button class="btn" data-action="taskCancel" data-id="${esc(task.id)}">${esc(t("取消任务"))}</button>`);
   if (task.sessionId) actions.push(`<a href="#" class="linkbtn" data-action="openSession" data-id="${esc(task.sessionId)}">${esc(t("查看会话"))}</a>`);
+  // Inline answer summary (user request 2026-11-14: 任务行直接看到回话结果).
+  const ans = task.sessionId ? (S.sessions.find(x => x.id === task.sessionId) || {}).answer || "" : "";
+  const ansLine = (ans && (st === "finished" || st === "failed")) ? `
+      <div class="t2" style="color:var(--fg)" title="${esc(ans)}">↳ ${esc(ans.replace(/\s+/g, " ").slice(0, 140))}${ans.length > 140 ? "…" : ""}</div>` : "";
   return `
   <div class="row">
     <div class="grow">
       <div class="t1">${esc(task.id)}${task.prompt ? " · " + esc(String(task.prompt).slice(0, 60)) : ""}</div>
-      <div class="t2">${esc(label(task.agentKind))} · ${esc(task.cwd||"")}${(task.error && (task.state === "failed" || task.state === "cancelled")) ? " · " + esc(task.error) : ""}</div>
+      <div class="t2">${esc(label(task.agentKind))} · ${esc(task.cwd||"")}${(task.error && (st === "failed" || st === "cancelled")) ? " · " + esc(task.error) : ""}</div>
+      ${ansLine}
     </div>
     ${pillFor(mapTaskState(st))}
     <span class="strip-time">${esc(fmtTime((task.startedAt || task.createdAt || 0) * 1000))}</span>
@@ -1302,8 +1312,39 @@ function renderSessions(){
   }).join("");
 }
 
-// sessionDetailHTML is the Hub 内只读 session 视图 (PRD F8): header + the
-// session-filtered event tail.
+// mdRender renders a conservative Markdown subset for agent utterances
+// (user request 2026-11-14: 回话支持 Markdown). Escape-first — no raw HTML
+// ever passes through — then fences, headings, lists, inline code, bold,
+// italic, and http(s)-only links. Offline console: hand-rolled, no CDN.
+function mdRender(src){
+  const escAll = t => String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  const inline = t => {
+    t = escAll(t);
+    t = t.replace(/`([^`\n]+)`/g, '<code class="mdcode">$1</code>');
+    t = t.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+    t = t.replace(/(^|[^*\w])\*([^*\n]+)\*/g, "$1<i>$2</i>");
+    t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="mdlink">$1</a>');
+    return t;
+  };
+  const out = [];
+  let inCode = false, codeBuf = [];
+  for (const ln of String(src||"").split("\n")){
+    if (/^```/.test(ln.trim())){
+      if (inCode){ out.push('<pre class="mdpre"><code>' + codeBuf.join("\n") + "</code></pre>"); codeBuf = []; inCode = false; }
+      else inCode = true;
+      continue;
+    }
+    if (inCode){ codeBuf.push(escAll(ln)); continue; }
+    const h = ln.match(/^(#{1,4})\s+(.*)/);
+    if (h){ out.push('<div class="mdhead">' + inline(h[2]) + "</div>"); continue; }
+    const li = ln.match(/^\s*[-*]\s+(.*)/);
+    if (li){ out.push('<div class="mdli">• ' + inline(li[1]) + "</div>"); continue; }
+    out.push(inline(ln));
+  }
+  if (inCode && codeBuf.length) out.push('<pre class="mdpre"><code>' + codeBuf.join("\n") + "</code></pre>");
+  return out.join("\n");
+}
+
 // talkBubbles renders the agent's actual utterances (回话内容, user request
 // 2026-11-14): consecutive status events carrying content/plan are merged
 // into one bubble per turn so streamed chunks read as a single answer.
@@ -1332,11 +1373,13 @@ function talkBubbles(sessionId){
       ${turns.map(tn => `
         <div style="background:var(--surface3,rgba(255,255,255,.04));border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:4px 0;max-height:220px;overflow:auto">
           <div style="font-size:10.5px;color:var(--faint);margin-bottom:4px">${esc(tn.kind === "plan" ? "plan" : "")}${esc(fmtTime(tn.ts))}</div>
-          <div style="white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.5;color:var(--fg)">${esc(tn.text)}</div>
+          <div style="word-break:break-word;font-size:12.5px;line-height:1.5;color:var(--fg)" class="mdbody">${mdRender(tn.text)}</div>
         </div>`).join("")}
     </div>`;
 }
 
+// sessionDetailHTML is the Hub 内只读 session 视图 (PRD F8): header + task
+// prompt + agent talk bubbles + tool-call trail + the session event tail.
 function sessionDetailHTML(s){
   const evs = S.events.filter(e => e.session_id === s.id).slice(-50).reverse();
   const calls = (S.toolCallsBySession[s.id] || []);
@@ -1397,6 +1440,7 @@ async function refreshSessions(){
       cwd: s.cwd, turns: s.turns, state: mapState(s.status),
       title: s.title || "", origin: s.origin || "managed", parent: s.parentSessionId || "",
       tokensIn: s.inputTokens || 0, tokensOut: s.outputTokens || 0,
+      answer: s.answer || "",
       last: (s.updatedAt || 0) * 1000, created: (s.createdAt || 0) * 1000
     }));
     renderAll();
@@ -1987,6 +2031,7 @@ async function initialLoad(){
       cwd: s.cwd, turns: s.turns, state: mapState(s.status),
       title: s.title || "", origin: s.origin || "managed", parent: s.parentSessionId || "",
       tokensIn: s.inputTokens || 0, tokensOut: s.outputTokens || 0,
+      answer: s.answer || "",
       last: (s.updatedAt || 0) * 1000, created: (s.createdAt || 0) * 1000
     }));
     S.agents = ag.agents || [];
@@ -2025,7 +2070,7 @@ async function initialLoad(){
     if (first) $("#task-cwd").value = first.value;
   } catch(e){ /* 非致命：忽略，用户仍可手动/原生选取 */ }
 
-  localize(); renderAll(); connect();
+  localize(); renderAll(); refreshSessions(); connect();
   loadNotifyStatus(); // fire-and-forget; must never break the first paint
 
   /* ---------- terminal (local xterm.js + FitAddon + ConPTY + WS) ---------- */

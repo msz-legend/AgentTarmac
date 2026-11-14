@@ -114,11 +114,11 @@ func main() {
 			}})
 			writeJSON(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
 				"sessionId": agentSessionID,
-				"update":    map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "fake agent warming up (unsolicited update 1)"}},
+				"update":    map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "## Vibe 回报\n\n这是 **Markdown** 回话：列出 `shims` 目录即可，*斜体* 也支持。"}},
 			}})
 			writeJSON(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
 				"sessionId": agentSessionID,
-				"update":    map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "still alive (unsolicited update 2)"}},
+				"update":    map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "```go\nfmt.Println(\"hello from fakeacp\")\n```\n- 要点一：握手已闭环\n- 要点二：[AgentHub](https://127.0.0.1:18899/) 本机可达"}},
 			}})
 		case "session/new":
 			logLine("METHOD=session/new -> " + agentSessionID)

@@ -52,6 +52,7 @@ type Session struct {
 	CreatedAt       int64  `json:"createdAt"`
 	UpdatedAt       int64  `json:"updatedAt"`
 	AgentSessionID  string `json:"agentSessionId"` // R8: real session id the agent generates (ACP session/new); native resume targets this
+	Answer          string `json:"answer,omitempty"` // R7+: accumulated agent answer text (streamed chunks + final result), capped at 32KB
 }
 
 // ToolCall is one observed tool invocation inside a session.

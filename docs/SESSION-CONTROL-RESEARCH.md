@@ -80,7 +80,11 @@ Windows 无原生 tmux；Hub 自己管理多 PTY 等价于方案 A。否决。
 
 ## 4. 推荐路线
 
-**第一阶段（C，前端为主 + 两处小后端）**：
+**第一阶段（C，前端为主 + 两处小后端）——已于 2026-11-14 实施完成（903d4d0）**：
+- ✅ runner 捕获（mapClaude init / mapCodex session_configured → agentSessionId 帧）+ adapter 落 agent_session_id
+- ✅ continue 升级 session-resume：同会话行续轮（--resume agent id），turns/answer 累积，零 child
+- ✅ 附带修复：adapter 内存会话状态跨回合陈旧（每帧重取 store 行）——续轮 turns=2/answer 两段实测通过
+- ✅ 会话详情实时 tail（WS 事件追加 eventsBySession）+ 终端提示仅对无 id 遗留行
 - [ ] runner.go：mapClaude 捕获 init 行 session_id → 复用 A8 的 session/update 通道带 agentSessionId；mapCodex 同调研
 - [ ] terminalUnavailable 拆分：有 agent_session_id 的托管会话不再 409，改为直播视图；无 id 的保留诚实提示
 - [ ] 终端页（或会话详情）：实时事件流（WS 过滤）+ 历史回放（/api/events?session=）+ 「继续对话」输入框（走 continue，claude/codex 用 --resume 续轮）

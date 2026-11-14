@@ -46,6 +46,14 @@
 - **最终冒烟**：UI 派发 opencode → `finished`、会话 `completed/turns=1`；事件库 118 行持久。
 - **白屏疑云**：受控复现两次（含杀 daemon 场景）页面均保持 76/69 个按钮——判定为 agent-browser 截图/快照瞬态，非产品缺陷；留观。
 
+## 追加（2026-11-14）：会话回话内容可视化（用户需求）
+
+用户提出「看到回话的具体内容」——数据已在（R2-F5 后 status 事件携带 content 且持久化于 ui_events），缺前端呈现：
+
+- **实现**（`e37bc0e`）：展开会话详情时拉取 `/api/events?session=<id>&limit=500`（持久化、不受内存环限制），把带 content/plan 的 status 事件渲染为「Agent 回话」气泡——**连续 chunk（间隔 <5s）合并为一个 turn**，流式输出读起来是一整段回答；同时渲染「任务描述」块显示完整 prompt（回话的用户半边）。
+- **点击验收**：展开 task-961528b2 → 截图 `accept-talk-content.png`：任务描述完整、回话气泡把两条 unsolicited chunk 合并为一turn（"fake agent warming up… / still alive…"）。
+- **测试教训**：`.row` 选择器在 board/会话两个视图重名——eval 验收必须用 `#view-sessions .row` 定位（board 行无 data-action，点击是 no-op，非产品缺陷）。
+
 ## 残留清单（明知未修，非本轮可关闭）
 
 | 项 | 性质 | 说明 |

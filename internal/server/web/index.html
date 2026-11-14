@@ -751,6 +751,8 @@ const ROWS = [
 ["派发中…","Dispatching…","ディスパッチ中…"],
 ["任务已入队","Task queued","タスクをキューに入れました"],
 ["重试已入队","Retry queued","再試行をキューに入れました"],
+["Agent 回话","Agent replies","Agent の応答"],
+["任务描述","Task prompt","タスク内容"],
 ["已取消","Cancelled","キャンセルしました"],
 ];
 const KV = {
@@ -914,7 +916,7 @@ const S = {
   pending: new Map(),     // request_id -> payload
   resolvedIds: new Set(), // keeps replays from resurrecting stale entries
   confirmArm: new Set(),  // allow_always double-confirm (decision B)
-  tasks: [], tasksPaused: false, toolCallsBySession: {},
+  tasks: [], tasksPaused: false, toolCallsBySession: {}, eventsBySession: {},
   selected: null,
   denyFor: null,
   rosterFilter: "all",
@@ -1302,6 +1304,39 @@ function renderSessions(){
 
 // sessionDetailHTML is the Hub 内只读 session 视图 (PRD F8): header + the
 // session-filtered event tail.
+// talkBubbles renders the agent's actual utterances (回话内容, user request
+// 2026-11-14): consecutive status events carrying content/plan are merged
+// into one bubble per turn so streamed chunks read as a single answer.
+function talkBubbles(sessionId){
+  const evs = (S.eventsBySession[sessionId] || S.events.filter(e => e.session_id === sessionId))
+    .filter(e => e.type === "status" && e.payload && (e.payload.content || e.payload.plan));
+  if (!evs.length) return "";
+  const turns = [];
+  for (const e of evs){
+    const prev = turns[turns.length - 1];
+    const gap = prev ? (e._ts || 0) - prev.lastTs : Infinity;
+    if (prev && prev.kind === (e.payload.plan ? "plan" : "text") && gap < 5000){
+      // Same turn: append the streamed chunk.
+      if (e.payload.content) prev.text += (prev.text ? "\n" : "") + e.payload.content;
+      if (e.payload.plan) prev.text += (prev.text ? "\n" : "") + e.payload.plan;
+      prev.lastTs = e._ts || prev.lastTs;
+    } else {
+      turns.push({ kind: e.payload.plan ? "plan" : "text",
+                   text: e.payload.content || e.payload.plan || "",
+                   ts: e.ts, lastTs: e._ts || 0 });
+    }
+  }
+  return `
+    <div style="padding:4px 16px 10px">
+      <div class="strip-meta" style="margin-bottom:6px">${t("Agent 回话")}</div>
+      ${turns.map(tn => `
+        <div style="background:var(--surface3,rgba(255,255,255,.04));border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:4px 0;max-height:220px;overflow:auto">
+          <div style="font-size:10.5px;color:var(--faint);margin-bottom:4px">${esc(tn.kind === "plan" ? "plan" : "")}${esc(fmtTime(tn.ts))}</div>
+          <div style="white-space:pre-wrap;word-break:break-word;font-size:12.5px;line-height:1.5;color:var(--fg)">${esc(tn.text)}</div>
+        </div>`).join("")}
+    </div>`;
+}
+
 function sessionDetailHTML(s){
   const evs = S.events.filter(e => e.session_id === s.id).slice(-50).reverse();
   const calls = (S.toolCallsBySession[s.id] || []);
@@ -1315,11 +1350,21 @@ function sessionDetailHTML(s){
           <span class="ev-detail">${esc(String(c.rawInput||"").slice(0,80))}</span></span>
         </div>`).join("")}
     </div>` : "";
+  // Full dispatch prompt for this session (user request: 看到回话的具体内容 —
+  // the prompt is the user's half of the conversation).
+  const task = S.tasks.find(x => x.sessionId === s.id);
+  const promptBlock = task && task.prompt ? `
+    <div style="padding:4px 16px 6px">
+      <div class="strip-meta" style="margin-bottom:4px">${t("任务描述")}</div>
+      <div style="white-space:pre-wrap;word-break:break-word;font-size:12px;color:var(--muted);background:var(--surface);border:1px dashed var(--line);border-radius:8px;padding:8px 10px;max-height:140px;overflow:auto">${esc(task.prompt)}</div>
+    </div>` : "";
   return `
   <div style="background:var(--surface2);border-bottom:1px solid var(--line)">
     <div style="padding:10px 16px">
       <div class="strip-meta">${t("会话详情")} · ${esc(label(s.kind))} · ${esc(s.cwd||"")} · origin=${esc(s.origin||"—")}${s.parent ? " · fork←" + esc(s.parent) : ""} · tokens ${s.tokensIn||0}/${s.tokensOut||0}</div>
     </div>
+    ${promptBlock}
+    ${talkBubbles(s.id)}
     ${trail}
     ${evs.length ? evs.map(evHTML).join("") : `<div class="empty">${esc(t("暂无数据"))}</div>`}
   </div>`;
@@ -1331,6 +1376,17 @@ async function fetchToolCalls(sessionId){
     const j = await api("/api/tool-calls?sessionId=" + encodeURIComponent(sessionId) + "&limit=50");
     S.toolCallsBySession[sessionId] = j.toolCalls || j.calls || [];
   } catch(e){ /* trail is best-effort */ }
+}
+
+// fetchSessionEvents pulls this session's persisted event stream (vibe-trial
+// R2-F5 made status events carry the agent's utterances; the detail view now
+// renders them as 回话 bubbles — user request 2026-11-14: 看到回话的具体内容).
+// The API returns oldest-first, matching conversation order.
+async function fetchSessionEvents(sessionId){
+  try {
+    const j = await api("/api/events?session=" + encodeURIComponent(sessionId) + "&limit=500");
+    S.eventsBySession[sessionId] = j.events || [];
+  } catch(e){ /* fallback to in-memory ring below */ }
 }
 
 async function refreshSessions(){
@@ -1631,13 +1687,17 @@ document.addEventListener("click", e => {
   if (a === "toggleSession"){
     const id = e.target.closest("[data-action]").dataset.id;
     S.openSession = S.openSession === id ? null : id;
-    if (S.openSession) fetchToolCalls(id).then(renderSessions); // R4-F3 trail
+    if (S.openSession){
+      fetchToolCalls(id).then(renderSessions);        // R4-F3 trail
+      fetchSessionEvents(id).then(renderSessions);    // 回话 bubbles (2026-11-14)
+    }
     renderSessions();
   }
   if (a === "openSession"){
     // 放行条 → 会话视图跳转入口 (PRD F8: 三处入口之一)
     S.openSession = e.target.closest("[data-action]").dataset.id;
     fetchToolCalls(S.openSession).then(renderSessions);
+    fetchSessionEvents(S.openSession).then(renderSessions);
     setView("sessions");
   }
   if (a === "sessionFork"){

@@ -90,7 +90,14 @@ Windows 无原生 tmux；Hub 自己管理多 PTY 等价于方案 A。否决。
 - [ ] 终端页（或会话详情）：实时事件流（WS 过滤）+ 历史回放（/api/events?session=）+ 「继续对话」输入框（走 continue，claude/codex 用 --resume 续轮）
 - [ ] 验收：派发任务 → 终端页实时看到 tool_call/回话流 → 结束后输入下一轮 → 同一会话行 turns+1、answer 追加
 
-**第二阶段（B，claude_code 先行）**：
+**第二阶段（B，claude_code 先行）——2026-11-14 决策：缓行**。
+C 落地后重新评估：B 的增量收益仅剩「消除每轮 CLI 启动开销（~1-2s）」；而它的用户价值
+（历史延续、同会话行累积、实时查看）C 已全部覆盖。代价是任务生命周期语义重构
+（进程结束≠任务结束、并发槽按回合计、空闲回收、进程崩溃恢复）——风险/收益比不划算。
+触发条件：若未来出现「回合进行中必须注入输入」的真实需求（claude -p 双向流式下
+回合中 stdin 不接受新 user turn，B 也无法做到），或 CLI 启动开销被证明是瓶颈，再启动。
+另注：claude -p 单进程内一次只有一个回合，B 并不能提供"运行中打字"能力——L2 的
+残余价值由终端页的原生 --resume REPL 承担（已有）。
 - [ ] streamACP/spawnTask 改常驻：claude `--input-format stream-json`；实测 hub-hook 审批兼容性
 - [ ] 任务语义：回合结束=result 行（state 保持 running→idle），进程保活 + N 分钟空闲回收 + 崩溃自动 fail
 - [ ] continue 复用常驻进程（不再新起）；并发槽改按"活动回合"计数

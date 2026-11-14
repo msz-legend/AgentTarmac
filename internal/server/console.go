@@ -53,6 +53,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	html := strings.Replace(string(webIndexHTML), "/*__BOOT__*/null", string(boot), 1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// no-store (2026-11-14): the console HTML embeds the boot token and is
+	// rebuilt with every daemon release — browser heuristic caching served a
+	// stale page after an upgrade and broke the whole app until a hard
+	// refresh. The token also must not linger in shared caches.
+	w.Header().Set("Cache-Control", "no-store")
 	// CSP (R7-4): single embedded page needs unsafe-inline for script/style,
 	// but connections are locked to same-origin (API + WS on the served host).
 	// object-src 'none' / frame-ancestors 'none' harden against clickjacking

@@ -28,7 +28,7 @@ func main() {
 	// Prompt markers override the env mode so one daemon serves all scenarios.
 	prompt := ""
 	resumeID := ""
-	if n := len(os.Args); n > 0 {
+	if n := len(os.Args); n > 1 {
 		// Fresh turn: `exec --json <prompt>` (prompt is the last arg).
 		// Resume turn (session control C-5): `exec resume <id> --json <prompt>`.
 		args := os.Args[1:]
@@ -37,7 +37,9 @@ func main() {
 				resumeID = args[i+1]
 			}
 		}
-		prompt = args[n-2]
+		if len(args) >= 2 {
+			prompt = args[len(args)-1]
+		}
 		for _, m := range []string{"hang", "fail", "ok"} {
 			if len(prompt) >= len(m)+2 && contains(prompt, "["+m+"]") {
 				mode = m

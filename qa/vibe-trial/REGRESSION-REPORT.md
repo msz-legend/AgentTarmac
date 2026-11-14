@@ -54,6 +54,17 @@
 - **点击验收**：展开 task-961528b2 → 截图 `accept-talk-content.png`：任务描述完整、回话气泡把两条 unsolicited chunk 合并为一turn（"fake agent warming up… / still alive…"）。
 - **测试教训**：`.row` 选择器在 board/会话两个视图重名——eval 验收必须用 `#view-sessions .row` 定位（board 行无 data-action，点击是 no-op，非产品缺陷）。
 
+## 追加（2026-11-14）：终端"控制同一个会话"——调研 + 方案 C 落地
+
+- 调研：`docs/SESSION-CONTROL-RESEARCH.md`（L1/L2/L3 语义拆解、CLI 能力实测、A/B/C/D 方案对比）
+- **C 落地（903d4d0）**：三 kind 捕获 agent_session_id；continue 对 claude/codex 升级
+  `session-resume`（同会话行续轮、--resume agent id、零 child）；adapter 每帧重取 store
+  行修复跨回合状态陈旧；会话详情实时 tail；终端提示仅对遗留无 id 行
+- **冒烟（全部通过）**：claude 续轮 turns=2/answer 两段；codex 续轮同验；opencode 仍走
+  redispatch（回归）；任务台账 ↳ 回答摘要行；no-store 头生效
+- **B 决策**：缓行（C 已覆盖用户价值，B 仅省启动开销，生命周期重构风险不划算；触发条件见调研文档）
+- 顺手修：handleIndex `Cache-Control: no-store`（浏览器启发式缓存曾导致升级后整页 JS 失效）
+
 ## 残留清单（明知未修，非本轮可关闭）
 
 | 项 | 性质 | 说明 |

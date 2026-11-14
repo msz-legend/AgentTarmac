@@ -131,8 +131,8 @@ M internal/tasks/tasks.go
 | --- | --- | --- |
 | 企微 846607 | 外部限制 | 官方服务端限频；窗口过后复测 `{"channel":"wecom","ok":true}` |
 | 页面注入完整 token | 架构后续 | WS 鉴权必需；真正解法 = 短时会话 token（待立项） |
-| CSP 头 | 硬化后续 | 需先审计内联脚本 |
-| 托管任务原生 resume | 功能后续 | 需捕获 agent 侧真实 session id（UI 已诚实禁用） |
+| CSP 头 | ✅ 已落地首版（2026-11-14） | default-src 'self' / object-src 'none' / frame-ancestors 'none' / connect-src 同源 WS；另加 Cache-Control: no-store（修升级后浏览器缓存旧 HTML） |
+| 托管任务原生 resume | ✅ 已落地（2026-11-14，方案 C） | 三 kind 捕获 agent_session_id（migration 0008）；continue 对 claude/codex 升级 session-resume 同会话行续轮；详见 docs/SESSION-CONTROL-RESEARCH.md（方案 B 缓行决策同文档） |
 | 间歇白屏 | 未复现 | 两次受控尝试均未复现（agent-browser 截图瞬态疑似）；留观 |
 
 ## 4. 工程约束（沿用，勿违）
@@ -153,5 +153,6 @@ M internal/tasks/tasks.go
 
 1. 工作树保持干净（当前全部已提交）。
 2. 发布前跑一轮：`go build ./... && go vet ./... && gofmt -l . && go test ./... -count=1`（当前 8/8 包全绿）。
-3. 残留清单四项按需立项；企微限频窗口过后先测通知。
+3. 残留清单按需立项；企微限频窗口过后先测通知。方案 C 已落地（session-resume），
+   方案 B 缓行（决策见 docs/SESSION-CONTROL-RESEARCH.md）。
 4. 生产 data 目录（`D:/DevTools/AgentHub/data`，13 个会话）与本轮试验数据（`qa/vibe-trial/data`）**互不相干**，清理时勿混。

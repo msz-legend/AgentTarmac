@@ -441,11 +441,17 @@ func (q *Queue) tryStart(ctx context.Context, t *acpclient.Task) bool {
 		Title:     truncate(t.Prompt, 80),
 	}
 	if existing, gerr := q.store.GetSession(ctx, sessionID); gerr == nil {
-		// Session already exists (retry of a previously failed task); reset it
-		// instead of re-inserting (avoids UNIQUE constraint failure).
+		// Session already exists (retry of a previously failed task, or a
+		// resume turn whose caller preset t.SessionID); reset the run-state
+		// instead of re-inserting (avoids UNIQUE constraint failure). A resume
+		// turn keeps the original title/turns — it continues the SAME
+		// conversation (session control C-3), it does not start a new one.
+		resumeTurn := t.SessionID != ""
 		existing.Status = acpclient.StatusActive
 		existing.CWD = t.CWD
-		existing.Title = truncate(t.Prompt, 80)
+		if !resumeTurn {
+			existing.Title = truncate(t.Prompt, 80)
+		}
 		existing.LastError = ""
 		existing.IsTerminal = false
 		existing.IsClosed = false
@@ -636,9 +642,15 @@ func (q *Queue) spawnCommand(ctx context.Context, t *acpclient.Task, sessionID s
 		if err := os.WriteFile(file, raw, 0o600); err != nil {
 			return nil, "", err
 		}
-		cmd := exec.CommandContext(ctx, bin, "-p", t.Prompt,
+		args := []string{"-p", t.Prompt,
 			"--output-format", "stream-json", "--verbose",
-			"--settings", file)
+			"--settings", file}
+		// Session control C-3: a resume turn continues the SAME agent
+		// conversation via the agent's real session id (captured by C-1).
+		if agentID := q.agentSessionIDOf(ctx, sessionID); agentID != "" {
+			args = append([]string{"--resume", agentID}, args...)
+		}
+		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Dir = t.CWD
 		return cmd, file, nil
 	}
@@ -655,9 +667,26 @@ func (q *Queue) spawnCommand(ctx context.Context, t *acpclient.Task, sessionID s
 		return cmd, "", nil
 	}
 	// codex
+	if agentID := q.agentSessionIDOf(ctx, sessionID); agentID != "" {
+		// C-3 resume turn: `codex exec resume <id> --json <prompt>` continues
+		// the same codex conversation.
+		cmd := exec.CommandContext(ctx, bin, "exec", "resume", agentID, "--json", t.Prompt)
+		cmd.Dir = t.CWD
+		return cmd, "", nil
+	}
 	cmd := exec.CommandContext(ctx, bin, "exec", "--json", t.Prompt)
 	cmd.Dir = t.CWD
 	return cmd, "", nil
+}
+
+// agentSessionIDOf looks up the real agent session id recorded for a Hub
+// session row ("" when unknown — first turn / legacy runs).
+func (q *Queue) agentSessionIDOf(ctx context.Context, sessionID string) string {
+	sess, err := q.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return ""
+	}
+	return sess.AgentSessionID
 }
 
 // streamTask parses the agent's JSONL stdout and routes tool frames through

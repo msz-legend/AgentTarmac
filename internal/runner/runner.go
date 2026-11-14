@@ -177,6 +177,17 @@ func MapStreamLine(sink FrameSink, kind, sessionID, line string) {
 func mapClaude(sink FrameSink, kind, sessionID string, m map[string]any) {
 	typ, _ := m["type"].(string)
 	switch typ {
+	case "system":
+		// init line carries the agent's REAL session id (session control C-1):
+		// without it, Hub-side resume (--resume) and the terminal surfaces can
+		// only reference the Hub-synthesized task- id no agent knows.
+		if sub, _ := m["subtype"].(string); sub == "init" {
+			if sid, _ := m["session_id"].(string); sid != "" && sid != sessionID {
+				_ = dispatchTo(sink, kind, "session/update", map[string]any{
+					"sessionId": sessionID, "agentSessionId": sid,
+				})
+			}
+		}
 	case "assistant":
 		msg, _ := m["message"].(map[string]any)
 		content, _ := msg["content"].([]any)
@@ -246,6 +257,14 @@ func mapClaude(sink FrameSink, kind, sessionID string, m map[string]any) {
 func mapCodex(sink FrameSink, kind, sessionID string, m map[string]any) {
 	typ, _ := m["type"].(string)
 	switch {
+	case typ == "session_configured":
+		// codex exec --json opens with this event carrying the REAL session id
+		// (session control C-1) — needed for `codex exec resume <id>` turns.
+		if sid, _ := m["session_id"].(string); sid != "" && sid != sessionID {
+			_ = dispatchTo(sink, kind, "session/update", map[string]any{
+				"sessionId": sessionID, "agentSessionId": sid,
+			})
+		}
 	case strings.HasSuffix(typ, "item.started"):
 		if item, _ := m["item"].(map[string]any); item != nil {
 			if it, _ := item["type"].(string); it == "command_execution" {

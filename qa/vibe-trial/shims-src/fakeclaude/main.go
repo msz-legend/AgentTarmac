@@ -40,10 +40,14 @@ func main() {
 	}
 	// Prompt markers override the env mode so one daemon serves all scenarios.
 	prompt := ""
+	resumeID := ""
 	args := os.Args[1:]
 	for i, a := range args {
 		if a == "-p" && i+1 < len(args) {
 			prompt = args[i+1]
+		}
+		if a == "--resume" && i+1 < len(args) {
+			resumeID = args[i+1] // session control C-5: resume keeps the id
 		}
 	}
 	for _, m := range []string{"highrisk", "hang", "fail", "ok"} {
@@ -51,7 +55,12 @@ func main() {
 			mode = m
 		}
 	}
-	sessionID := fmt.Sprintf("fake-cc-%d", os.Getpid())
+	// A resume turn reuses the SAME agent session id — this is what proves
+	// history continuation end-to-end (a fresh run would mint a new pid id).
+	sessionID := resumeID
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("fake-cc-%d", os.Getpid())
+	}
 	emit(map[string]any{"type": "system", "subtype": "init", "session_id": sessionID, "tools": []string{"Bash"}})
 
 	switch mode {

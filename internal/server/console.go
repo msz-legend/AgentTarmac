@@ -601,6 +601,25 @@ func (s *Server) handleSessionContinue(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "任务队列不可用，无法重新派发该会话")
 				return
 			}
+			// Session control C-4: when the agent's REAL session id is known
+			// (captured by C-1 runners), a continue is a RESUME TURN on the
+			// same session row — `claude --resume <agentId>` / `codex exec
+			// resume <agentId>` continue the same conversation, and events
+			// keep flowing into this session (turns/answer accumulate).
+			if sess.AgentSessionID != "" &&
+				(sess.AgentKind == acpclient.AgentKindClaudeCode || sess.AgentKind == acpclient.AgentKindCodex) {
+				t, err := s.tasks.EnqueueInSession(r.Context(), sess.AgentKind, sess.CWD, text, id)
+				if err != nil {
+					writeError(w, http.StatusConflict, err.Error())
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{
+					"ok": true, "mode": "session-resume", "task_id": t.ID,
+					"session_id":        id,
+					"agent_session_id":  sess.AgentSessionID,
+				})
+				return
+			}
 			// Create the child session row FIRST so the lineage is durable
 			// regardless of scheduling (vibe-trial A10: writing it after
 			// Enqueue raced the queue's async tryStart and silently lost).

@@ -1315,13 +1315,14 @@ func (a *BaseAdapter) handleToolResult(rawMsg json.RawMessage) (json.RawMessage,
 // the state machine, accumulates usage and relays the update to listeners.
 func (a *BaseAdapter) handleSessionUpdate(rawMsg json.RawMessage) (json.RawMessage, error) {
 	var payload struct {
-		SessionID  string          `json:"sessionId"`
-		Status     string          `json:"status"`
-		Content    string          `json:"content"`
-		IsComplete bool            `json:"isComplete"`
-		Usage      json.RawMessage `json:"usage"`
-		Plan       string          `json:"plan"`
-		Error      string          `json:"error"`
+		SessionID      string          `json:"sessionId"`
+		Status         string          `json:"status"`
+		Content        string          `json:"content"`
+		IsComplete     bool            `json:"isComplete"`
+		Usage          json.RawMessage `json:"usage"`
+		Plan           string          `json:"plan"`
+		Error          string          `json:"error"`
+		AgentSessionID string          `json:"agentSessionId"` // session control C-1: the agent's real id
 	}
 	if err := json.Unmarshal(rawMsg, &payload); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal session/update: %w", err)
@@ -1368,6 +1369,11 @@ func (a *BaseAdapter) handleSessionUpdate(rawMsg json.RawMessage) (json.RawMessa
 	// the answer.
 	if payload.Content != "" {
 		state.sess.Answer = appendAnswer(state.sess.Answer, payload.Content)
+	}
+	// Record the agent's real session id (session control C-1: runners report
+	// it via the init/session_configured line; native resume targets it).
+	if payload.AgentSessionID != "" && state.sess.AgentSessionID != payload.AgentSessionID {
+		state.sess.AgentSessionID = payload.AgentSessionID
 	}
 	if status == StatusCompleted {
 		state.sess.IsTerminal = true
@@ -1451,6 +1457,13 @@ func joinNotes(a, b string) string {
 // from the DB after a process restart. Callers must hold a.mu.
 func (a *BaseAdapter) sessionLocked(sessionID string) (*sessionState, error) {
 	if state, ok := a.sessions[sessionID]; ok {
+		// Re-sync with the store row (session control C-fix): the cache used
+		// to go stale across turns — a resume turn's tool frames wrote back
+		// turn-1-era turns/answer and late rows clobbered fresh ones. The
+		// in-memory toolCalls map is orthogonal and stays.
+		if fresh, err := a.store.GetSession(context.Background(), sessionID); err == nil {
+			state.sess = fresh
+		}
 		return state, nil
 	}
 	sess, err := a.store.GetSession(context.Background(), sessionID)

@@ -757,6 +757,7 @@ const ROWS = [
 ["任务已入队","Task queued","タスクをキューに入れました"],
 ["重试已入队","Retry queued","再試行をキューに入れました"],
 ["Agent 回话","Agent replies","Agent の応答"],
+["已续轮同一会话","Turn sent to the same session","同じセッションにターンを送信しました"],
 ["任务描述","Task prompt","タスク内容"],
 ["已取消","Cancelled","キャンセルしました"],
 ];
@@ -1030,6 +1031,12 @@ function onEvent(e, replay){
   } else if (e.type === "task" && e.payload && e.payload.task_id){
     refreshTasks();
   }
+  // Live tail (session control C-6): while a session detail is expanded and
+  // its persisted stream was fetched, real-time events append to it so the
+  // talk bubbles / event tail stream without a re-fetch.
+  if (!replay && e.session_id && Array.isArray(S.eventsBySession[e.session_id])){
+    S.eventsBySession[e.session_id].push(e);
+  }
   if (!replay) maybeNotify(e);
   renderAll();
 }
@@ -1294,7 +1301,9 @@ function renderSessions(){
     // the explicit secondary action (PRD D14/Q-F5); the terminal button only
     // shows for kinds with a native interactive resume (PRD F8/D15).
     const canTerm = s.kind === "claude_code" || s.kind === "codex";
-    const managedTask = String(s.id||"").startsWith("task-"); // Hub-synthesized id, agent can't resume it
+    // C-4: managed sessions WITH a captured agent session id are resumable
+    // (native resume targets agentSessionId); only legacy rows (no id) stay hint-only.
+    const managedTask = String(s.id||"").startsWith("task-") && !s.agentSessionId;
     const open = S.openSession === s.id;
     return `
     <div class="row" data-action="toggleSession" data-id="${esc(s.id)}" style="cursor:pointer">
@@ -1440,7 +1449,7 @@ async function refreshSessions(){
       cwd: s.cwd, turns: s.turns, state: mapState(s.status),
       title: s.title || "", origin: s.origin || "managed", parent: s.parentSessionId || "",
       tokensIn: s.inputTokens || 0, tokensOut: s.outputTokens || 0,
-      answer: s.answer || "",
+      answer: s.answer || "", agentSessionId: s.agentSessionId || "",
       last: (s.updatedAt || 0) * 1000, created: (s.createdAt || 0) * 1000
     }));
     renderAll();
@@ -1599,10 +1608,14 @@ async function sendContinue(){
     // command. The endpoint reports which path it took via "mode".
     const j = await api("/api/sessions/" + encodeURIComponent(continueId) + "/continue",
       {method:"POST", body: JSON.stringify({text})});
-    toast(j && j.mode === "task-redispatch" ? t("已重新派发任务") : t("已提交，等待 Agent 响应"));
+    // session-resume (C-4) continues the SAME session row; task-redispatch
+    // forks a child. Both mint a task row — refresh the ledger for either.
+    toast(j && j.mode === "task-redispatch" ? t("已重新派发任务")
+        : j && j.mode === "session-resume" ? t("已续轮同一会话")
+        : t("已提交，等待 Agent 响应"));
     closeContinue();
     refreshSessions();
-    if (j && j.mode === "task-redispatch") refreshTasks();
+    if (j && (j.mode === "task-redispatch" || j.mode === "session-resume")) refreshTasks();
   } catch(e){ toast(String(e.message||e)); }
   finally { if (btn) btn.disabled = false; }
 }
@@ -2031,7 +2044,7 @@ async function initialLoad(){
       cwd: s.cwd, turns: s.turns, state: mapState(s.status),
       title: s.title || "", origin: s.origin || "managed", parent: s.parentSessionId || "",
       tokensIn: s.inputTokens || 0, tokensOut: s.outputTokens || 0,
-      answer: s.answer || "",
+      answer: s.answer || "", agentSessionId: s.agentSessionId || "",
       last: (s.updatedAt || 0) * 1000, created: (s.createdAt || 0) * 1000
     }));
     S.agents = ag.agents || [];

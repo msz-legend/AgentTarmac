@@ -284,8 +284,13 @@ func (q *Queue) Enqueue(ctx context.Context, agentKind, cwd, prompt string) (*ac
 	if st, err := os.Stat(cwd); err != nil || !st.IsDir() {
 		return nil, fmt.Errorf("tasks: cwd %q is not an accessible directory", cwd)
 	}
-	if _, err := resolveAgentBinary(agentKind); err != nil {
-		return nil, err
+	// Skip binary resolution when a custom spawner is injected (tests):
+	// the spawner replaces the headless command construction entirely, so
+	// requiring the real CLI in PATH would break CI without claude/codex.
+	if q.spawner == nil {
+		if _, err := resolveAgentBinary(agentKind); err != nil {
+			return nil, err
+		}
 	}
 	if dup := q.findDuplicate(ctx, agentKind, cwd, prompt); dup != nil {
 		return dup, nil

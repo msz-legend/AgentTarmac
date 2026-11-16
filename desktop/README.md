@@ -72,4 +72,4 @@ npm run dist
 - **opencode/hermes 会话依赖本机已安装的 CLI**：安装包不含这两个第三方 CLI，缺失时壳会跳过对应 connector 并在日志中说明；
 - **首次安装后需对齐 hook token**：daemon 在全新数据目录下会生成新 token，而 Claude Code / Codex 的 hook 配置指向本机共享数据目录的 token。本机部署沿用 `D:\DevTools\AgentHub\data` 即可保持一致；
 - 从某些终端（如 DeepSeek Harness 会话）启动时，环境可能带 `ELECTRON_RUN_AS_NODE=1`，会使 Electron 二进制退化为纯 Node 并静默退出（exit 0）。桌面双击由 explorer.exe 启动不受影响；防御性入口见 `launcher\launch-native.vbs`。
-- 自动更新（决策 F）依赖发布渠道与签名，规划于 M3（见 `HANDOFF.md`）；本地 v1 通过重打包更新。
+- 自动更新（决策 F）依赖发布渠道与签名，规划于 M3（见 [docs/roadmap.md](../docs/roadmap.md)）；本地 v1 通过重打包更新。

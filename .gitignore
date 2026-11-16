@@ -30,3 +30,16 @@ agenthubd.exe.bak-*
 # Browser profile / runtime caches (not source)
 launcher/edge-profile/
 desktop/node_modules/
+
+# Local-only internal docs & QA evidence (open-source cleanup)
+HANDOFF.md
+docs/HANDOFF-archive-*.md
+.zcode/
+qa/CU_TEST_REPORT.md
+qa/README.md
+qa/*.png
+qa/data-recovery/
+qa/pm-review-*/
+qa/scripts/__pycache__/
+qa/vibe-trial/*
+!qa/vibe-trial/shims-src/

@@ -140,7 +140,7 @@ desktop/preload.js     Electron contextBridge：原生目录选择框（PC 端�
 go build ./... && go vet ./... && go test ./...
 ```
 
-里程碑与决策记录见 [HANDOFF.md](HANDOFF.md)。
+路线图见 [docs/roadmap.md](docs/roadmap.md)，测试方案见 [docs/TEST_PLAN.md](docs/TEST_PLAN.md)。
 
 ## 许可
 

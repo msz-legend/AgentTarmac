@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build daemon and connectors
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go build -trimpath -ldflags "-s -w" -o agenthubd.exe ./cmd/agenthubd
+          go build -trimpath -ldflags "-s -w" -o agenthub-connect.exe ./cmd/agenthub-connect
+          go build -trimpath -ldflags "-s -w" -o agenthub-relay.exe ./cmd/agenthub-relay
+
+      - name: Smoke check
+        run: |
+          ./agenthubd.exe -h
+          ./agenthub-connect.exe -h
+
+      - name: Package
+        run: |
+          New-Item -ItemType Directory -Path dist | Out-Null
+          Copy-Item agenthubd.exe,agenthub-connect.exe,agenthub-relay.exe,README.md,LICENSE,THIRD_PARTY_NOTICES.md dist/
+          Compress-Archive -Path dist/* -DestinationPath AgentTarmac-${{ github.ref_name }}-windows-amd64.zip
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AgentTarmac-*-windows-amd64.zip
+          generate_release_notes: true

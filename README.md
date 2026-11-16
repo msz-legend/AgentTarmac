@@ -9,6 +9,17 @@
 
 ## 快速开始（开箱即用）
 
+### 方式 A：下载预编译版（免装 Go）
+
+到 [Releases](../../releases) 下载 `AgentTarmac-vX.Y.Z-windows-amd64.zip`，解压后：
+
+```powershell
+.\agenthubd.exe          # 首次运行自动生成 API Token 并写入 data\token
+# 打开控制台 http://127.0.0.1:8799/ 粘贴 Token
+```
+
+### 方式 B：源码构建（需 Go 1.26+）
+
 ```powershell
 # 1. 启动 daemon（首次运行自动生成 API Token 并写入 data\token）
 go build -o agenthubd.exe ./cmd/agenthubd
